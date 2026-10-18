@@ -1,0 +1,8 @@
+.env
+.venv/
+*.pdf
+out.json
+*.tfstate*
+.terraform/
+__pycache__/
+.DS_Store
