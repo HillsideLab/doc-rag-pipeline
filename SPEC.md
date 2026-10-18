@@ -22,7 +22,7 @@ This is a learning prototype built from **public documents only**. It is not pro
 **Tier 1 (must):** local pipeline + API
 extract (Textract) -> chunk -> embed -> index (Pinecone) -> `/query` with citations; pytest; Dockerfile; GitHub Actions CI; README with diagram and a "Verified components" table.
 
-**Tier 2 (strongly wanted):** event-driven automation + IaC
+**Tier 2 (core, build right after M2/M3; this mirrors the job's event-driven pipeline):** event-driven automation + IaC
 S3 upload -> EventBridge -> Step Functions -> Lambda; DynamoDB status table; retries (max 3) and failure state; Terraform for all of it; Secrets Manager for the Pinecone key.
 
 **Tier 3 (if time):** small eval set (retrieval hit@k, vector vs keyword), extraction strategy comparison (text-only vs tables, with per-page cost), JWT bearer check on the API, OpenAPI spec exported to `docs/openapi.json`, VLM vs Textract on one chart/table page.
@@ -90,13 +90,22 @@ Pinecone vector metadata: `doc_id`, `source_file`, `page`, `chunk_type` (text | 
 - M1: models + interfaces + fakes + chunking, fully unit-tested.
 - M2: Textract integration with S3 caching (verify with a real small PDF).
 - M3: embedder + Pinecone store (verify with a real call; keep dimension 1024).
-- M4: `/query` with generator selection and citations.
-- M5: FastAPI endpoints, Dockerfile, Pydantic schemas.
-- M6: Lambda handlers, Step Functions, DynamoDB, Terraform (`plan` first, then ask before `apply`).
+- M4: `/query` logic with generator selection and citations (keep it small; StubGenerator by default).
+- M6 (do BEFORE M5): Lambda handlers, Step Functions (Textract async: start, wait, poll, get), DynamoDB, EventBridge, Terraform (`plan` first, then ask before `apply`). Does not need Bedrock.
+- M5: FastAPI endpoints, Dockerfile, Pydantic schemas (minimal is fine).
 - M7: README (diagram, run steps, cost notes, cleanup, "Verified components" table, honest limitations), `docs/ARCHITECTURE.md` in Japanese.
+
+### Notes for M6 (Tier 2)
+
+- The ingestion pipeline (Textract, chunking, Pinecone embeddings, Pinecone upsert, DynamoDB) must not depend on Bedrock. While Bedrock is blocked, use `PineconeInferenceEmbedder` as the Embedder.
+- IAM: the `rag-mock` user needs extra permissions for Terraform. Propose a separate policy scoped to resource names `doc-rag-mock-*` (Lambda, Step Functions, DynamoDB, EventBridge, S3, Secrets Manager, CloudWatch Logs, and IAM roles with that prefix only). Never ask for `AdministratorAccess`. Show the policy to the user before it is created.
+- Lambda: Python 3.12, no VPC, no NAT Gateway. Keep dependencies small (`boto3` is built in; package `pydantic` and the Pinecone client). Do not package numpy.
+- Secrets: the Pinecone key is read from Secrets Manager at runtime. Terraform creates only the empty secret container.
+- Tag everything `Project=doc-rag-mock`. Provide `terraform destroy` and `scripts/cleanup.sh`. Set CloudWatch Logs retention to 7 days.
+- Cost guard: tell the user before running the first real pipeline on a PDF; use `text` mode for trial runs.
 
 ## 11. Definition of done
 
 - Tier 1: from a clean clone, README steps ingest one public PDF and answer a question with page citations; CI is green.
-- Tier 2: uploading a PDF to S3 triggers the workflow; status is visible in DynamoDB; a forced failure ends in FAILED after 3 attempts.
+- Tier 2 (priority): uploading a PDF to S3 triggers the workflow; status is visible in DynamoDB; a forced failure ends in FAILED after 3 attempts; everything is created and destroyed by Terraform.
 - README states honestly which components were actually run against real services.
