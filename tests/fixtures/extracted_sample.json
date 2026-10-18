@@ -1,0 +1,41 @@
+{
+  "doc_id": "sample-doc",
+  "source_file": "sample_smpc.pdf",
+  "pages": [
+    {
+      "page_number": 1,
+      "lines": [
+        {"text": "Examplamol 500 mg tablets", "top": 0.05, "height": 0.02},
+        {"text": "1. NAME OF THE MEDICINAL PRODUCT", "top": 0.10, "height": 0.02},
+        {"text": "Examplamol 500 mg tablets (synthetic example, not a real medicine).", "top": 0.125, "height": 0.02},
+        {"text": "4.2 Posology and method of administration", "top": 0.20, "height": 0.02},
+        {"text": "Adults: the usual dose is one tablet every four to six hours.", "top": 0.25, "height": 0.02},
+        {"text": "The maximum daily dose is eight tablets in 24 hours.", "top": 0.275, "height": 0.02},
+        {"text": "Do not take more than the maximum daily dose.", "top": 0.30, "height": 0.02},
+        {"text": "Children under 12 years: not recommended.", "top": 0.36, "height": 0.02}
+      ],
+      "tables": []
+    },
+    {
+      "page_number": 2,
+      "lines": [
+        {"text": "Swallow the tablets with water, with or without food.", "top": 0.05, "height": 0.02},
+        {"text": "4.8 Undesirable effects", "top": 0.15, "height": 0.02},
+        {"text": "The following adverse reactions have been reported.", "top": 0.20, "height": 0.02},
+        {"text": "Frequencies are listed in the table below.", "top": 0.225, "height": 0.02},
+        {"text": "6.1 List of excipients", "top": 0.60, "height": 0.02},
+        {"text": "Microcrystalline cellulose, povidone, magnesium stearate.", "top": 0.65, "height": 0.02}
+      ],
+      "tables": [
+        {
+          "top": 0.30,
+          "rows": [
+            ["System organ class", "Adverse reaction", "Frequency"],
+            ["Nervous system disorders", "Headache", "Common"],
+            ["Gastrointestinal disorders", "Nausea", "Uncommon"]
+          ]
+        }
+      ]
+    }
+  ]
+}

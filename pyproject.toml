@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Learning prototype: event-driven document processing and RAG on AWS (public documents only)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "numpy>=2.5.4",
+    "pydantic>=2.14.1",
+]
 
 [dependency-groups]
 dev = [
