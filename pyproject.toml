@@ -1,0 +1,31 @@
+[project]
+name = "doc-rag-pipeline"
+version = "0.1.0"
+description = "Learning prototype: event-driven document processing and RAG on AWS (public documents only)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: calls real AWS / Pinecone / network services (opt-in)",
+]
