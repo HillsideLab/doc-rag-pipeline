@@ -123,18 +123,32 @@ def test_store_replace_document_removes_stale_chunks_of_that_document_only() -> 
     assert next(h for h in hits if h.chunk.chunk_id == "x1").chunk.page == 3
 
 
-def test_stub_generator_deduplicates_citations() -> None:
+def test_stub_generator_lists_every_hit_with_numbered_citations() -> None:
     hits = [
         SearchHit(chunk=make_chunk("a", page=1), score=0.9),
         SearchHit(chunk=make_chunk("b", page=1), score=0.8),
         SearchHit(chunk=make_chunk("c", page=2, chunk_type="table"), score=0.7),
+        SearchHit(chunk=make_chunk("d", page=3), score=0.6),
     ]
     answer = StubGenerator().generate("question", hits)
-    assert [(c.page, c.chunk_type) for c in answer.citations] == [(1, "text"), (2, "table")]
-    assert "text of a" in answer.answer
+    assert [c.chunk_id for c in answer.citations] == ["a", "b", "c", "d"]
+    assert answer.citations[2].chunk_type == "table"
+    assert answer.generator == "stub"
+    assert answer.answer.startswith("No generative model was used.")
+    for n, chunk_id in enumerate(["a", "b", "c", "d"], 1):
+        assert f"[{n}] f.pdf, page " in answer.answer
+        assert f"text of {chunk_id}" in answer.answer
+
+
+def test_stub_generator_truncates_long_passages() -> None:
+    chunk = make_chunk("a").model_copy(update={"text": "x" * 50})
+    answer = StubGenerator(max_chars=10).generate("q", [SearchHit(chunk=chunk, score=1.0)])
+    assert "x" * 10 + " ..." in answer.answer
+    assert "x" * 11 not in answer.answer
 
 
 def test_stub_generator_without_hits() -> None:
     answer = StubGenerator().generate("question", [])
     assert answer.answer == NO_ANSWER
     assert answer.citations == []
+    assert answer.generator == "stub"

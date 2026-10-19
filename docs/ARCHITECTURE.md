@@ -45,6 +45,15 @@
 - `src/evaluation.py`: 評価の質問の読み込みと、hit@k / recall@k の計算 (純粋関数)。
 - `scripts/eval_retrieval.py`: 評価の質問を本物の Pinecone で検索し、hit@k と recall@k を表示する CLI (`--rerank` でリランクあり)。読み取りのみ。
 - `tests/test_evaluation.py`: hit@k / recall@k の計算と、質問ファイルの形式のテスト。
+- `src/citations.py`: チャンクから出典 (chunk_id、ファイル、製品名、section、ページ、種類) と、回答やプロンプトに出す 1 行の表示を作る。すべての Generator が使う。
+- `src/answering.py`: 質問応答の本体 `answer_question` (検索 → 生成 → 免責の文を付ける)。CLI、API (M5)、Lambda (M6) から同じ関数を呼ぶ。
+- `src/providers/factory.py`: 環境変数 `EMBEDDER` / `VECTOR_STORE` / `RERANKER` / `GENERATOR` から実装を選ぶ。既定はすべてフェイク。
+- `src/providers/bedrock.py`: Generator の Bedrock Claude 実装 (Converse API、推論プロファイル ID)。**未検証** (アカウントの制限で Bedrock を呼べないため、フェイクのクライアントでのみテスト)。
+- `scripts/ask.py`: 質問 1 つに答え、回答・出典・免責の文を表示する CLI。実装は環境変数で選ぶ。読み取りのみ。
+- `scripts/eval_answers.py`: 評価セットの 5 問に答え、出典に正解のチャンクが含まれるかを数え、使った量を表示する CLI。読み取りのみ。
+- `tests/test_answering.py`: 出典の項目、免責の文、0 件、doc_id での絞り込み、リランクの順序のテスト。
+- `tests/test_factory.py`: 既定値がフェイクであること、知らない値や禁止の組み合わせ、必須の変数がないときのテスト。本物のクライアントは作らない。
+- `tests/test_bedrock_generator.py`: Bedrock 実装のテスト。bedrock-runtime は自作のフェイクで、通信しない。
 
 ## 設計メモ
 
@@ -112,3 +121,29 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 | 製品名 + リランク (上位 50 件) | 5/5 | 0.85 |
 
 目次のチャンク (`What is in this leaflet`) を除く対策はまだ行っていない。
+
+### 質問応答と出典 (M4)
+1. 流れは `answer_question`: 質問を埋め込み → 検索 (任意でリランク) → Generator が回答を作る → `disclaimer` を付ける。業務ロジックは `src/` にあり、CLI・API・Lambda は呼ぶだけ。
+2. 出典はチャンク 1 つにつき 1 件で、`chunk_id`、`file`、`product`、`section`、`page`、`chunk_type` を持つ。同じページの 2 チャンクも別の出典にする。製品名は埋め込みと同じく EMA のファイル名から取り、合わなければ空にする (推測しない)。
+3. `Answer.generator` に回答を作った実装の名前 (`stub` など) を入れる。生成モデルを使ったかどうかを、本文を読まずに判定できるようにするため。Bedrock は `bedrock` とだけ書く。推論プロファイルの ARN にはアカウント ID が入るため。
+4. 免責の文 (医療上の助言ではない) は本文に混ぜず、`Answer.disclaimer` に毎回入れる。`answer_question` で付けるので、どの Generator でも同じ文になり、モデルの出力にも頼らない。評価や本文も汚れない。
+
+### StubGenerator (既定)
+1. 生成モデルを使わない。先頭に「No generative model was used.」と書き、受け取ったチャンクをすべて、スコアの高い順に `[n] 製品名, section, page P (chunk ID)` と本文の先頭 400 文字で並べる。出典の n 番目は `[n]` と同じチャンク。
+2. 件数を切らないのは、回答の出典と検索の上位 k 件を一致させ、回答の評価と hit@k をそろえるため。件数は `top_k` で決める。
+3. 限界: 内容が質問に合うかは判断できない。「見つからない」と答えるのは検索結果が 0 件のときだけ。
+
+### 実装の切り替え
+1. `EMBEDDER` (fake|pinecone)、`VECTOR_STORE` (memory|pinecone)、`RERANKER` (none|pinecone)、`GENERATOR` (stub|bedrock)。未設定なら最初の値 (フェイク) で、ネットワークもキーも使わない。知らない値はエラーで止める。
+2. 本物の実装は選ばれたときだけ import し、インデックス名やキーはそれぞれの `from_env` が環境変数から読む。コードには外部の名前もキーも書かない。
+3. `VECTOR_STORE=pinecone` のときは `EMBEDDER=pinecone` が必須。インデックスは Pinecone の埋め込みで作ったので、別の埋め込みで検索すると結果が意味をなさない (1 つのインデックスに 1 つの埋め込みモデル)。
+4. M3 のスクリプト (`index_documents`、`search`、`eval_retrieval`) は Pinecone 専用のまま残し、切り替えは使わない。
+
+### Bedrock の生成 (未検証)
+1. Converse API を推論プロファイル ID (`BEDROCK_INFERENCE_PROFILE_ID`、既定値なし) で呼ぶ。Converse はモデルによらず同じ形なので短く書ける。`temperature=0`。
+2. system プロンプトの規則: 渡した番号付きの文章だけを根拠にする / 根拠がなければ決まった文 `I don't know based on the provided documents.` で答える / 文ごとに `[n]` で出典を示す。
+3. 回答の `[n]` から出典を決める (範囲外の番号は無視)。番号が 1 つもなければ渡した全チャンクを出典にする (出典を必ず付けるため)。「わからない」の回答は出典なし。検索結果が 0 件ならモデルを呼ばない。
+4. 本物では一度も呼んでいない。README でも verified にしない。
+
+### 回答の評価 (StubGenerator、本物の Pinecone + リランク、top_k=5)
+`scripts/eval_answers.py` で、評価セットの 5 問に答えた。出典に正解のチャンクが 1 つでも入った質問は 5/5、正解のうち出典に入った割合の平均は 0.85。Stub は上位 5 件をすべて出典にするので、M3 のリランクありの hit@5 (5/5、0.85) と一致する。1 回の実行で、埋め込み 66 トークン、リランク 5 リクエスト。

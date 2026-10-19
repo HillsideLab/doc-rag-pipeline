@@ -61,6 +61,8 @@ class Reranker(Protocol):
 
 @runtime_checkable
 class Generator(Protocol):
+    name: str  # copied into Answer.generator, e.g. "stub"
+
     def generate(self, question: str, hits: list[SearchHit]) -> Answer:
         """Answer the question from the retrieved chunks, with citations."""
         ...

@@ -67,7 +67,10 @@ class SearchHit(BaseModel):
 
 
 class Citation(BaseModel):
+    chunk_id: str
     file: str
+    product: str = ""  # from the EMA file name; "" when the name does not follow it
+    section: str = ""
     page: int
     chunk_type: ChunkType
 
@@ -75,3 +78,5 @@ class Citation(BaseModel):
 class Answer(BaseModel):
     answer: str
     citations: list[Citation]
+    generator: str  # which Generator wrote the answer, e.g. "stub" (no generative model)
+    disclaimer: str = ""

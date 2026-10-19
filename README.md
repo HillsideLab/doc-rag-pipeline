@@ -8,7 +8,7 @@ It is not production software. See `SPEC.md` for scope.
 - **Not medical advice.** This is a technical prototype. Its answers are not medical advice
   and must not be used for any clinical or treatment decision.
 
-Status: work in progress (milestone M3, embeddings and Pinecone). See "Verified components"
+Status: work in progress (milestone M4, answering with citations). See "Verified components"
 for what has been run against real services.
 
 ## Verified components
@@ -21,6 +21,8 @@ A component is marked "verified" only after a real call has succeeded.
 | Pinecone Inference API embeddings (`llama-text-embed-v2`, 1024 dims) | verified 2026-10-19 (335 chunks from the 2 documents) |
 | Pinecone dense index: upsert, re-index without stale chunks, query with `doc_id` filter | verified 2026-10-19 (re-indexing kept 335 records; integration test removed stale chunks in a test namespace) |
 | Pinecone reranking (`bge-reranker-v2-m3`, top 50 vector hits) | verified 2026-10-19 (5 requests) |
+| Answering with `StubGenerator` (no generative model) over Pinecone retrieval + reranking | verified 2026-10-19 (5 evaluation questions) |
+| `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
 
 ## Retrieval quality
@@ -40,6 +42,43 @@ chosen by the developer, so these numbers show a trend, not a benchmark.
 
 Known weakness: the leaflet's table of contents chunk ("What is in this leaflet") ranks high
 for many questions without reranking. It has not been removed.
+
+## Answering questions
+
+`src/answering.py` runs: embed the question -> search (optionally reranked) -> generator ->
+answer. Every answer has citations (`chunk_id`, file, product, section, page, chunk type), a
+`generator` field, and a fixed `disclaimer` (not medical advice) that does not depend on any
+model output.
+
+Providers are chosen by environment variables; the defaults need no network and no keys.
+
+| Variable | Values | Default |
+|---|---|---|
+| `EMBEDDER` | `fake`, `pinecone` | `fake` |
+| `VECTOR_STORE` | `memory`, `pinecone` (needs `EMBEDDER=pinecone`) | `memory` |
+| `RERANKER` | `none`, `pinecone` | `none` |
+| `GENERATOR` | `stub`, `bedrock` (not verified) | `stub` |
+
+```
+export EMBEDDER=pinecone VECTOR_STORE=pinecone RERANKER=pinecone GENERATOR=stub
+uv run --env-file .env python -m scripts.ask "What are the excipients of Cablivi?"
+uv run --env-file .env python -m scripts.eval_answers     # 5 questions, citation check
+```
+
+`StubGenerator` (the default) uses no generative model, and its answer says so on the
+first line. It lists every retrieved chunk (`top_k`, default 5) as a numbered passage with its
+source. It cannot judge whether the passages actually answer the question; it reports
+"No relevant passages were found." only when retrieval returns nothing.
+
+`BedrockClaudeGenerator` instructs the model to answer only from the given passages, to reply
+"I don't know based on the provided documents." when they do not contain the answer, and to
+cite passages as `[n]`. It needs `BEDROCK_INFERENCE_PROFILE_ID` (an inference profile ID, not
+a bare model ID). It has not been run against Bedrock.
+
+Result on the 5 evaluation questions (StubGenerator, Pinecone + reranking, `top_k=5`): 5/5
+answers cite at least one expected chunk; the mean share of expected chunks cited is 0.85.
+This matches retrieval hit@5 with reranking, because the stub cites every retrieved chunk.
+One run used 66 embedding tokens and 5 rerank requests.
 
 ## Documents
 

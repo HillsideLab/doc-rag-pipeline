@@ -6,7 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src.models import Answer, Chunk, Citation, ExtractedDocument, SearchHit
+from src.citations import citation_for, source_label
+from src.models import Answer, Chunk, ExtractedDocument, SearchHit
 from src.providers.base import EMBEDDING_DIM
 
 NO_ANSWER = "No relevant passages were found."
@@ -102,22 +103,33 @@ class InMemoryStore:
 
 
 class StubGenerator:
-    """Extractive answer: returns the top chunks' text with their citations. No LLM."""
+    """Extractive answer with no generative model: every retrieved chunk is listed, best
+    first, as "[n] source label" plus the start of its text. Citation n is passage [n].
 
-    def __init__(self, max_chunks: int = 3, max_chars: int = 400) -> None:
-        self.max_chunks = max_chunks
+    It lists all hits it receives (the caller's top_k decides how many), so the answer
+    cites exactly the chunks that retrieval returned. It cannot judge whether the chunks
+    answer the question; it says it found nothing only when there are no hits.
+    """
+
+    name = "stub"
+
+    def __init__(self, max_chars: int = 400) -> None:
         self.max_chars = max_chars
 
     def generate(self, question: str, hits: list[SearchHit]) -> Answer:
-        top = hits[: self.max_chunks]
-        if not top:
-            return Answer(answer=NO_ANSWER, citations=[])
-        citations: list[Citation] = []
-        for hit in top:
-            citation = Citation(
-                file=hit.chunk.source_file, page=hit.chunk.page, chunk_type=hit.chunk.chunk_type
-            )
-            if citation not in citations:
-                citations.append(citation)
-        answer = "\n\n".join(hit.chunk.text[: self.max_chars] for hit in top)
-        return Answer(answer=answer, citations=citations)
+        if not hits:
+            return Answer(answer=NO_ANSWER, citations=[], generator=self.name)
+        lines = [
+            "No generative model was used. The passages below are copied from the "
+            f"{len(hits)} retrieved chunks, best match first."
+        ]
+        for n, hit in enumerate(hits, 1):
+            text = hit.chunk.text
+            if len(text) > self.max_chars:
+                text = text[: self.max_chars] + " ..."
+            lines.append(f"[{n}] {source_label(hit.chunk)}\n{text}")
+        return Answer(
+            answer="\n\n".join(lines),
+            citations=[citation_for(hit.chunk) for hit in hits],
+            generator=self.name,
+        )

@@ -44,7 +44,7 @@ PDF uploaded to S3 (prefix incoming/)
 FastAPI
   POST /documents            register an S3 key and start the pipeline (Tier 1: runs inline/local)
   GET  /documents/{doc_id}   processing status
-  POST /query                {question, top_k} -> {answer, citations[{file, page, chunk_type}]}
+  POST /query                {question, top_k} -> {answer, citations[{chunk_id, file, product, section, page, chunk_type}], generator, disclaimer}
   GET  /health               liveness + dependency checks (no secrets in output)
 ```
 
