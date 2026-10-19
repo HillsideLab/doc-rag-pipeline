@@ -1,0 +1,286 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "doc-rag-pipeline",
+    "description": "Answers questions from public EMA product information, with citations. Local demo only: no authentication. Not medical advice.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/ask": {
+      "post": {
+        "summary": "Ask",
+        "description": "Answer a question from the indexed documents, with citations and a disclaimer.",
+        "operationId": "ask_ask_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "An upstream service failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Liveness and the provider names. Calls no external service.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Answer": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "type": "array",
+            "title": "Citations"
+          },
+          "generator": {
+            "type": "string",
+            "title": "Generator"
+          },
+          "disclaimer": {
+            "type": "string",
+            "title": "Disclaimer",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer",
+          "citations",
+          "generator"
+        ],
+        "title": "Answer"
+      },
+      "AskRequest": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Question",
+            "examples": [
+              "What are the excipients of Cablivi?"
+            ]
+          },
+          "top_k": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "description": "number of passages to cite",
+            "default": 5
+          }
+        },
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "AskRequest"
+      },
+      "Citation": {
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "title": "Chunk Id"
+          },
+          "file": {
+            "type": "string",
+            "title": "File"
+          },
+          "product": {
+            "type": "string",
+            "title": "Product",
+            "default": ""
+          },
+          "section": {
+            "type": "string",
+            "title": "Section",
+            "default": ""
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "chunk_type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "table"
+            ],
+            "title": "Chunk Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chunk_id",
+          "file",
+          "page",
+          "chunk_type"
+        ],
+        "title": "Citation"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "request_id"
+        ],
+        "title": "ErrorResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "embedder": {
+            "type": "string",
+            "title": "Embedder"
+          },
+          "vector_store": {
+            "type": "string",
+            "title": "Vector Store"
+          },
+          "reranker": {
+            "type": "string",
+            "title": "Reranker"
+          },
+          "generator": {
+            "type": "string",
+            "title": "Generator"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "embedder",
+          "vector_store",
+          "reranker",
+          "generator"
+        ],
+        "title": "HealthResponse",
+        "description": "Liveness and the configured providers by name. No external service is called."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

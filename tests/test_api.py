@@ -5,6 +5,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from scripts import export_openapi
 from src.answering import DISCLAIMER
 from src.api.main import UPSTREAM_ERROR, Services, create_app
 from src.models import Chunk, SearchHit
@@ -154,3 +155,8 @@ def test_health_shows_provider_names(client: TestClient) -> None:
 def test_ask_schema_has_the_example_question(client: TestClient) -> None:
     schema = client.get("/openapi.json").json()["components"]["schemas"]["AskRequest"]
     assert schema["properties"]["question"]["examples"] == [QUESTION]
+
+
+def test_committed_openapi_matches_the_code() -> None:
+    # Same check as the CI step; regenerate with: uv run python -m scripts.export_openapi
+    assert export_openapi.OUTPUT.read_text() == export_openapi.render()
