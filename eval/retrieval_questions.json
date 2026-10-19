@@ -1,0 +1,42 @@
+[
+  {
+    "id": "cablivi-excipients",
+    "question": "What are the excipients of Cablivi?",
+    "doc_id": null,
+    "expected": ["790288df910934e1:p10:c4", "790288df910934e1:p11:c0"],
+    "note": "SmPC 6.1 List of excipients, split over pages 10 and 11"
+  },
+  {
+    "id": "cablivi-side-effects",
+    "question": "What are the most common side effects of Cablivi?",
+    "doc_id": null,
+    "expected": ["790288df910934e1:p5:c2", "790288df910934e1:p6:c0"],
+    "note": "SmPC 4.8 Undesirable effects (summary and table)"
+  },
+  {
+    "id": "aubagio-pregnancy",
+    "question": "Can Aubagio be used during pregnancy?",
+    "doc_id": null,
+    "expected": [
+      "590c2a61b8e2e029:p9:c1",
+      "590c2a61b8e2e029:p9:c2",
+      "590c2a61b8e2e029:p44:c2",
+      "590c2a61b8e2e029:p45:c0"
+    ],
+    "note": "SmPC 4.6 Fertility, pregnancy and lactation, and the leaflet's Pregnancy and breast-feeding"
+  },
+  {
+    "id": "cablivi-dose",
+    "question": "What is the Cablivi dose for adults?",
+    "doc_id": null,
+    "expected": ["790288df910934e1:p2:c4", "790288df910934e1:p3:c0"],
+    "note": "SmPC 4.2 Posology and method of administration"
+  },
+  {
+    "id": "cablivi-excipients-filtered",
+    "question": "What are the excipients of Cablivi?",
+    "doc_id": "790288df910934e1",
+    "expected": ["790288df910934e1:p10:c4", "790288df910934e1:p11:c0"],
+    "note": "Same as cablivi-excipients, searched within Cablivi only"
+  }
+]

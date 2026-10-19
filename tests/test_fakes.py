@@ -14,10 +14,12 @@ from src.providers.fakes import (
 )
 
 
-def make_chunk(chunk_id: str, page: int = 1, chunk_type: ChunkType = "text") -> Chunk:
+def make_chunk(
+    chunk_id: str, page: int = 1, chunk_type: ChunkType = "text", doc_id: str = "d"
+) -> Chunk:
     return Chunk(
         chunk_id=chunk_id,
-        doc_id="d",
+        doc_id=doc_id,
         source_file="f.pdf",
         page=page,
         chunk_type=chunk_type,
@@ -99,6 +101,26 @@ def test_store_rejects_length_mismatch() -> None:
 
 def test_empty_store_returns_no_hits() -> None:
     assert InMemoryStore(dimension=4).query(unit(0), top_k=3) == []
+
+
+def test_store_filters_by_doc_id() -> None:
+    store = InMemoryStore(dimension=4)
+    store.upsert([make_chunk("a", doc_id="x"), make_chunk("b", doc_id="y")], [unit(0), unit(1)])
+    hits = store.query(unit(0), top_k=10, doc_id="y")
+    assert [h.chunk.chunk_id for h in hits] == ["b"]
+    assert store.query(unit(0), top_k=10, doc_id="missing") == []
+
+
+def test_store_replace_document_removes_stale_chunks_of_that_document_only() -> None:
+    store = InMemoryStore(dimension=4)
+    store.upsert(
+        [make_chunk("x1", doc_id="x"), make_chunk("x2", doc_id="x"), make_chunk("y1", doc_id="y")],
+        [unit(0), unit(1), unit(2)],
+    )
+    store.replace_document("x", [make_chunk("x1", doc_id="x", page=3)], [unit(3)])
+    hits = store.query(unit(3), top_k=10)
+    assert sorted(h.chunk.chunk_id for h in hits) == ["x1", "y1"]
+    assert next(h for h in hits if h.chunk.chunk_id == "x1").chunk.page == 3
 
 
 def test_stub_generator_deduplicates_citations() -> None:

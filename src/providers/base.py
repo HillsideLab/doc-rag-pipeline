@@ -39,8 +39,23 @@ class VectorStore(Protocol):
         """Insert or replace chunks by chunk_id."""
         ...
 
-    def query(self, vector: list[float], top_k: int) -> list[SearchHit]:
-        """Return the top_k most similar chunks, best first."""
+    def replace_document(
+        self, doc_id: str, chunks: list[Chunk], vectors: list[list[float]]
+    ) -> None:
+        """Make `chunks` the only chunks stored for doc_id; older chunks not in it are deleted."""
+        ...
+
+    def query(self, vector: list[float], top_k: int, doc_id: str | None = None) -> list[SearchHit]:
+        """Return the top_k most similar chunks, best first, optionally from one document."""
+        ...
+
+
+@runtime_checkable
+class Reranker(Protocol):
+    name: str
+
+    def rerank(self, query: str, documents: list[str], top_n: int) -> list[tuple[int, float]]:
+        """Return (position in `documents`, relevance score) for the top_n documents, best first."""
         ...
 
 

@@ -34,6 +34,17 @@
 - `tests/test_textract_parse.py`: 変換規則のテスト。
 - `tests/test_textract_extractor.py`: キャッシュ判定、ポーリング、ページング、失敗時の扱いのテスト。S3 と Textract は自作のフェイク。
 - `tests/test_textract_integration.py`: 本物の S3 と Textract を呼ぶテスト (`-m integration` のときだけ実行)。
+- `src/indexing.py`: 埋め込む文字列の組み立て (section + 本文)、1 文書の登録 (入れ直し)、質問での検索。どの Embedder / VectorStore でも動く。
+- `src/providers/pinecone.py`: Embedder と Reranker の Pinecone Inference API 実装と、VectorStore の Pinecone 実装 (dense インデックス)。
+- `scripts/index_documents.py`: `data/extracted/` の抽出結果をチャンクに分け、Pinecone に登録する CLI。書き込み前に確認を求める。Textract は呼ばない。
+- `scripts/search.py`: 質問を投げ、上位のチャンク (chunk_id、ページ、section、スコア) を表示する CLI。読み取りのみ。
+- `tests/test_indexing.py`: 埋め込む文字列の規則、入れ直しで古いチャンクが残らないこと、doc_id での絞り込みのテスト (フェイクのみ)。
+- `tests/test_pinecone_provider.py`: Pinecone 実装のテスト。SDK のオブジェクトは自作のフェイクで、通信しない。
+- `tests/test_pinecone_integration.py`: 本物の Pinecone を呼ぶテスト。専用の namespace を使い、最後に消す (`-m integration` のときだけ実行)。
+- `eval/retrieval_questions.json`: 検索の評価用の質問 5 問と、上位に出てほしい chunk_id。
+- `src/evaluation.py`: 評価の質問の読み込みと、hit@k / recall@k の計算 (純粋関数)。
+- `scripts/eval_retrieval.py`: 評価の質問を本物の Pinecone で検索し、hit@k と recall@k を表示する CLI (`--rerank` でリランクあり)。読み取りのみ。
+- `tests/test_evaluation.py`: hit@k / recall@k の計算と、質問ファイルの形式のテスト。
 
 ## 設計メモ
 
@@ -75,3 +86,29 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 4. 捨てるのは LAYOUT_PAGE_NUMBER の行だけ。LAYOUT_HEADER / LAYOUT_FOOTER の行は残す。Cablivi では HEADER / FOOTER の 8 箇所がすべて本文の誤分類だった (17・28 ページの扉、16 ページの ANNEX III の扉、10・11 ページの 6.1 の添加物、21〜23 ページの箱の表示)。繰り返しヘッダのある文書を追加するときは、同じ文字列が複数ページに出るときだけ捨てる方式に切り替える。
 5. ページ番号を除いた行が 2 行以下のページは扉とみなし、その行を見出し (`is_heading=True`) にする。`A. LABELLING` などの扉は Textract がフッタに分類し、番号付き見出しの正規表現にも合わないため。見出しになれば、チャンキング規則 6 で次のチャンクの先頭に付き、`section` も切り替わる。本文が 2 行以下しかないページも見出し扱いになる点は既知の制約。
 6. 空のページも `Page` として残し、ページ番号がずれないようにする。
+
+### 埋め込みと Pinecone への登録
+1. インデックス `doc-rag-mock` は普通の dense インデックス (1024 次元、cosine、serverless aws us-east-1、組み込みの埋め込みモデルなし)。`describe_index` の `embed` が None であることで確認した。埋め込みは Pinecone Inference API で作り、ベクトルとして upsert する。
+2. 埋め込みモデルは `llama-text-embed-v2` (dimension=1024)。1 入力 2,048 トークンまで。`multilingual-e5-large` は 507 トークンまでで、500 語のチャンクの末尾が切れるため使わない。1 リクエスト 96 件まで (`inference.get_model` で確認)。
+3. 登録時は `input_type=passage`、質問は `input_type=query`。Embedder の `embed_documents` と `embed_query` にそのまま対応する。
+4. 埋め込む文字列は `製品名 | section: 本文` (例: `Cablivi | 6.1 List of excipients: Trisodium citrate ...`)。6.1 の続きのページのように、本文に節の名前も製品名もないチャンクがあり、質問の側にはふつう製品名が入るため。本文の先頭 200 文字以内に section があれば二重にしない (先頭に上の階層の見出しが付く場合があるため、先頭一致では判定しない)。元の本文はメタデータの `text` に残し、引用と回答にはこちらを使う。
+   - 製品名は EMA のファイル名 `<製品名>-epar-product-information_en.pdf` の先頭から取る (cablivi → Cablivi)。この形でないファイルには製品名を付けない (推測しない)。EMA の命名規則に頼っている点は既知の制約。
+   - Pinecone は 1 リクエストの全入力を、その中で一番長い入力の長さで数える (実測: 9 トークンと 826 トークンを一緒に送ると 1,652)。そのため長さ順に並べてからバッチにし、ベクトルは元の順に戻す。1 回の全件登録は 159,155 → 67,073 トークンに減った。登録前に出す見積もりは上限 (実測の約 1.9 倍)。
+5. レコードの ID は chunk_id。メタデータは `doc_id`、`source_file`、`page`、`chunk_type`、`section`、`text` (切らない。最大 3,400 文字で、上限の 40 KB に収まる)、`embedder`。Pinecone はメタデータの数値を float で返すので、`page` は int に戻す。
+6. 入れ直し (`replace_document`): (1) ID の前方一致 `<doc_id>:` で今ある ID を一覧 (2) 新しいチャンクを upsert (3) 新しい ID に含まれない古い ID を削除。先に upsert するので、文書が検索から消える時間がない。メタデータの絞り込みによる削除は、直後に書いた新しいチャンクまで消すので使わない。
+7. 検索の doc_id での絞り込みは、メタデータの filter `{"doc_id": {"$eq": ...}}`。
+8. `PINECONE_INDEX` に既定値は置かず、未設定ならエラーで止める (M2 の `S3_BUCKET` と同じ方針)。API キーは `from_env` で読むだけで、保存もログ出力もしない。
+9. 1 つのインデックスには 1 つの埋め込みモデルだけ。モデルを変えたら全件を入れ直す。
+10. リランク (任意): `search(..., reranker=...)` を渡すと、ベクトル検索の上位 50 件を `bge-reranker-v2-m3` で並べ替えて上位 k 件を返す。リランカーは質問とチャンクを一緒に読むので、ベクトルの近さより精度が高い。渡さなければベクトル検索だけ。無料プランは月 500 リクエスト、1 分 60 リクエストで、質問 1 つにつき 1 リクエスト。モデルの既定は `truncate=NONE` (1,024 トークンを超えると失敗) なので `END` を指定する。Cohere のリランクは無料プランでは使えない。
+
+### 検索の評価 (hit@5)
+`eval/retrieval_questions.json` の 5 問で、上位 5 件に正解のチャンクが 1 つでも入れば hit。recall@5 は正解のうち上位 5 件に入った割合。正解は SmPC の該当の節 (妊娠だけは患者向け説明書の節も含む) で、箱の表示 (`3. LIST OF EXCIPIENTS`) や説明書の同じ内容は正解に数えていない。問題数が少なく、正解も開発者が決めたので、数字は傾向を見るためのもの。
+
+| 段階 | hit@5 | 平均 recall@5 |
+|---|---|---|
+| section を付けた状態 (M3 の最初) | 1/5 | 0.15 |
+| 見出しの二重を直し、長さ順のバッチに変更 | 1/5 | 0.15 |
+| 製品名を付けた | 4/5 | 0.45 |
+| 製品名 + リランク (上位 50 件) | 5/5 | 0.85 |
+
+目次のチャンク (`What is in this leaflet`) を除く対策はまだ行っていない。

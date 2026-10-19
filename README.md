@@ -8,8 +8,8 @@ It is not production software. See `SPEC.md` for scope.
 - **Not medical advice.** This is a technical prototype. Its answers are not medical advice
   and must not be used for any clinical or treatment decision.
 
-Status: work in progress (milestone M2, Textract extraction). See "Verified components" for
-what has been run against real services.
+Status: work in progress (milestone M3, embeddings and Pinecone). See "Verified components"
+for what has been run against real services.
 
 ## Verified components
 
@@ -18,7 +18,28 @@ A component is marked "verified" only after a real call has succeeded.
 | Component | Status |
 |---|---|
 | Textract (AnalyzeDocument LAYOUT, async) + S3 cache | verified 2026-10-19 (Cablivi 39 pages, Aubagio 50 pages; re-run served from the cache) |
+| Pinecone Inference API embeddings (`llama-text-embed-v2`, 1024 dims) | verified 2026-10-19 (335 chunks from the 2 documents) |
+| Pinecone dense index: upsert, re-index without stale chunks, query with `doc_id` filter | verified 2026-10-19 (re-indexing kept 335 records; integration test removed stale chunks in a test namespace) |
+| Pinecone reranking (`bge-reranker-v2-m3`, top 50 vector hits) | verified 2026-10-19 (5 requests) |
 | Bedrock | blocked by an AWS account restriction |
+
+## Retrieval quality
+
+Measured with `scripts/eval_retrieval.py` on 5 questions (`eval/retrieval_questions.json`).
+A question is a hit@5 when at least one expected chunk is in the top 5; recall@5 is the share
+of expected chunks in the top 5. Expected chunks are the matching SmPC sections (plus the
+leaflet section for the pregnancy question). The set is tiny and the expected chunks were
+chosen by the developer, so these numbers show a trend, not a benchmark.
+
+| Stage | hit@5 | mean recall@5 |
+|---|---|---|
+| Embedded text "section: body" | 1/5 | 0.15 |
+| Heading no longer repeated; batches sorted by length (token cost only) | 1/5 | 0.15 |
+| Embedded text "Product \| section: body" (product from the EMA file name) | 4/5 | 0.45 |
+| Same, plus reranking of the top 50 vector hits | 5/5 | 0.85 |
+
+Known weakness: the leaflet's table of contents chunk ("What is in this leaflet") ranks high
+for many questions without reranking. It has not been removed.
 
 ## Documents
 
@@ -41,6 +62,21 @@ uv run --env-file .env python -m scripts.extract_pdf data/pdfs/<file>.pdf
 ```
 
 Output: `data/extracted/<doc_id>.json` (an `ExtractedDocument`).
+
+## Index and search with Pinecone
+
+Uses the Pinecone free (Starter) plan: a dense serverless index (1024 dims, cosine, aws
+us-east-1) and the hosted Inference API. Textract is not called; the input is the cached
+`data/extracted/*.json`. One full index of the 2 documents uses about 68,000 embedding tokens
+(free plan: 5M per month). One index uses one embedding model; switching models requires
+re-indexing everything.
+
+```
+# .env needs PINECONE_API_KEY and PINECONE_INDEX
+uv run --env-file .env python -m scripts.index_documents          # asks before writing
+uv run --env-file .env python -m scripts.search "Can Aubagio be used during pregnancy?" --rerank
+uv run --env-file .env python -m scripts.eval_retrieval --rerank  # hit@5 / recall@5
+```
 
 ## Setup
 

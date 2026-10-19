@@ -65,11 +65,29 @@ class InMemoryStore:
             self._chunks[chunk.chunk_id] = chunk
             self._vectors[chunk.chunk_id] = self._as_array(vector)
 
-    def query(self, vector: list[float], top_k: int) -> list[SearchHit]:
-        if not self._vectors:
-            return []
+    def replace_document(
+        self, doc_id: str, chunks: list[Chunk], vectors: list[list[float]]
+    ) -> None:
+        new_ids = {chunk.chunk_id for chunk in chunks}
+        stale = [
+            chunk_id
+            for chunk_id, chunk in self._chunks.items()
+            if chunk.doc_id == doc_id and chunk_id not in new_ids
+        ]
+        self.upsert(chunks, vectors)
+        for chunk_id in stale:
+            del self._chunks[chunk_id]
+            del self._vectors[chunk_id]
+
+    def query(self, vector: list[float], top_k: int, doc_id: str | None = None) -> list[SearchHit]:
         query = self._as_array(vector)
-        ids = list(self._vectors)
+        ids = [
+            chunk_id
+            for chunk_id, chunk in self._chunks.items()
+            if doc_id is None or chunk.doc_id == doc_id
+        ]
+        if not ids:
+            return []
         matrix = np.stack([self._vectors[chunk_id] for chunk_id in ids])
         norms = np.linalg.norm(matrix, axis=1) * np.linalg.norm(query)
         scores = (matrix @ query) / np.where(norms == 0, 1.0, norms)
