@@ -1,0 +1,29 @@
+{
+  "DocumentMetadata": {"Pages": 3},
+  "FeatureTypes": ["LAYOUT"],
+  "Blocks": [
+    {"BlockType": "PAGE", "Id": "page-1", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.0, "Left": 0.0, "Width": 1.0, "Height": 1.0}}, "Relationships": [{"Type": "CHILD", "Ids": ["l1-hdr", "l1-title", "l1-left-a", "l1-right-h", "l1-left-b", "l1-right-a", "l1-pn", "y1-hdr", "y1-title", "y1-left", "y1-right-h", "y1-right", "y1-pn"]}]},
+    {"BlockType": "LINE", "Id": "l1-hdr", "Page": 1, "Text": "Examplamol leaflet - synthetic example", "Geometry": {"BoundingBox": {"Top": 0.02, "Left": 0.1, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l1-title", "Page": 1, "Text": "Package leaflet: information for the user", "Geometry": {"BoundingBox": {"Top": 0.06, "Left": 0.1, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l1-left-a", "Page": 1, "Text": "Read all of this leaflet carefully", "Geometry": {"BoundingBox": {"Top": 0.15, "Left": 0.1, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l1-right-h", "Page": 1, "Text": "2. What you need to know", "Geometry": {"BoundingBox": {"Top": 0.15, "Left": 0.55, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l1-left-b", "Page": 1, "Text": "before you start taking this medicine.", "Geometry": {"BoundingBox": {"Top": 0.175, "Left": 0.1, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l1-right-a", "Page": 1, "Text": "Do not take Examplamol if you are allergic.", "Geometry": {"BoundingBox": {"Top": 0.2, "Left": 0.55, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l1-pn", "Page": 1, "Text": "1", "Geometry": {"BoundingBox": {"Top": 0.96, "Left": 0.5, "Width": 0.02, "Height": 0.02}}},
+    {"BlockType": "LAYOUT_HEADER", "Id": "y1-hdr", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.02, "Left": 0.1, "Width": 0.35, "Height": 0.02}}, "Relationships": [{"Type": "CHILD", "Ids": ["l1-hdr"]}]},
+    {"BlockType": "LAYOUT_TITLE", "Id": "y1-title", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.06, "Left": 0.1, "Width": 0.35, "Height": 0.02}}, "Relationships": [{"Type": "CHILD", "Ids": ["l1-title"]}]},
+    {"BlockType": "LAYOUT_TEXT", "Id": "y1-left", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.15, "Left": 0.1, "Width": 0.35, "Height": 0.045}}, "Relationships": [{"Type": "CHILD", "Ids": ["l1-left-a", "l1-left-b"]}]},
+    {"BlockType": "LAYOUT_SECTION_HEADER", "Id": "y1-right-h", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.15, "Left": 0.55, "Width": 0.35, "Height": 0.02}}, "Relationships": [{"Type": "CHILD", "Ids": ["l1-right-h"]}]},
+    {"BlockType": "LAYOUT_TEXT", "Id": "y1-right", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.2, "Left": 0.55, "Width": 0.35, "Height": 0.02}}, "Relationships": [{"Type": "CHILD", "Ids": ["l1-right-a"]}]},
+    {"BlockType": "LAYOUT_PAGE_NUMBER", "Id": "y1-pn", "Page": 1, "Geometry": {"BoundingBox": {"Top": 0.96, "Left": 0.5, "Width": 0.02, "Height": 0.02}}, "Relationships": [{"Type": "CHILD", "Ids": ["l1-pn"]}]},
+
+    {"BlockType": "PAGE", "Id": "page-2", "Page": 2, "Geometry": {"BoundingBox": {"Top": 0.0, "Left": 0.0, "Width": 1.0, "Height": 1.0}}, "Relationships": [{"Type": "CHILD", "Ids": ["l2-orphan", "l2-a", "l2-foot", "y2-text", "y2-foot"]}]},
+    {"BlockType": "LINE", "Id": "l2-orphan", "Page": 2, "Text": "Stray note at the bottom", "Geometry": {"BoundingBox": {"Top": 0.8, "Left": 0.1, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l2-a", "Page": 2, "Text": "Swallow the tablet with water.", "Geometry": {"BoundingBox": {"Top": 0.1, "Left": 0.1, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LINE", "Id": "l2-foot", "Page": 2, "Text": "Synthetic document for tests", "Geometry": {"BoundingBox": {"Top": 0.97, "Left": 0.1, "Width": 0.35, "Height": 0.02}}},
+    {"BlockType": "LAYOUT_TEXT", "Id": "y2-text", "Page": 2, "Geometry": {"BoundingBox": {"Top": 0.1, "Left": 0.1, "Width": 0.35, "Height": 0.02}}, "Relationships": [{"Type": "CHILD", "Ids": ["l2-a"]}]},
+    {"BlockType": "LAYOUT_FOOTER", "Id": "y2-foot", "Page": 2, "Geometry": {"BoundingBox": {"Top": 0.97, "Left": 0.1, "Width": 0.35, "Height": 0.02}}, "Relationships": [{"Type": "CHILD", "Ids": ["l2-foot"]}]},
+
+    {"BlockType": "PAGE", "Id": "page-3", "Page": 3, "Geometry": {"BoundingBox": {"Top": 0.0, "Left": 0.0, "Width": 1.0, "Height": 1.0}}}
+  ]
+}

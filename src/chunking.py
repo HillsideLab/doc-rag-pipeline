@@ -3,7 +3,8 @@
 Rules (see docs/ARCHITECTURE.md):
 - Chunks never cross pages, so every citation has an exact page number.
 - Lines are grouped into paragraphs by vertical gap.
-- A numbered heading (e.g. "4.8 Undesirable effects") starts a new chunk and sets `section`.
+- A heading starts a new chunk and sets `section`: a line the extractor marked as a heading,
+  or a numbered line such as "4.8 Undesirable effects".
 - Paragraphs are packed up to `max_tokens` words, with `overlap_tokens` words repeated
   at the start of the next chunk. Tokens are approximated by whitespace-separated words.
 - Each table is one chunk, rendered as Markdown, never split.
@@ -56,8 +57,10 @@ def chunk_document(
     return chunks
 
 
-def _is_heading(text: str) -> bool:
-    text = text.strip()
+def _is_heading(line: Line) -> bool:
+    if line.is_heading:
+        return True
+    text = line.text.strip()
     return len(text) <= MAX_HEADING_CHARS and HEADING_PATTERN.match(text) is not None
 
 
@@ -77,7 +80,7 @@ def _section_groups(lines: list[Line], section: str) -> tuple[list[tuple[str, li
     for line in lines:
         if not line.text.strip():
             continue
-        heading = _is_heading(line.text)
+        heading = _is_heading(line)
         new_paragraph = previous is not None and _starts_paragraph(previous, line)
         if paragraph and (heading or new_paragraph):
             groups[-1][1].append(" ".join(paragraph))
@@ -122,7 +125,7 @@ def _pack(paragraphs: list[str], max_tokens: int, overlap_tokens: int) -> list[s
 def _section_at(lines: list[Line], top: float, section: str) -> str:
     """Section of the last heading above `top` on the page, else the carried-over section."""
     for line in lines:
-        if line.top <= top and _is_heading(line.text):
+        if line.top <= top and _is_heading(line):
             section = line.text.strip()
     return section
 

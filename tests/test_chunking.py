@@ -80,6 +80,22 @@ def test_heading_starts_new_chunk_and_sets_section() -> None:
     ]
 
 
+def test_line_marked_as_heading_starts_new_chunk_without_number() -> None:
+    page = Page(
+        page_number=1,
+        lines=[
+            Line(text="Intro text", top=0.0, height=LINE_HEIGHT),
+            Line(text="Package leaflet", top=0.025, height=LINE_HEIGHT, is_heading=True),
+            Line(text="Read all of this leaflet", top=0.05, height=LINE_HEIGHT),
+        ],
+    )
+    chunks = chunk_document(make_doc(page))
+    assert [(c.section, c.text) for c in chunks] == [
+        ("", "Intro text"),
+        ("Package leaflet", "Package leaflet Read all of this leaflet"),
+    ]
+
+
 def test_lowercase_after_number_is_not_a_heading() -> None:
     doc = make_doc(make_page(["4.2 Posology"], ["2 tablets daily"]))
     chunks = chunk_document(doc)

@@ -34,7 +34,7 @@ PDF uploaded to S3 (prefix incoming/)
   -> EventBridge rule (Object Created)
   -> Step Functions (Standard)
        RegisterDocument  (DynamoDB: RECEIVED)
-       Extract           (Textract async job; raw JSON cached in S3 under textract/)
+       Extract           (Textract async job; raw JSON cached in S3 under textract-cache/<sha256>.json)
        Chunk             (structure-aware chunks + metadata)
        EmbedAndIndex     (embeddings -> Pinecone upsert)
        MarkIndexed       (DynamoDB: INDEXED)
@@ -68,8 +68,8 @@ Pinecone vector metadata: `doc_id`, `source_file`, `page`, `chunk_type` (text | 
 
 ## 7. Extraction and chunking
 
-- Textract async API on PDFs in S3. Mode is configurable: `text` (DetectDocumentText, cheapest) or `tables` (AnalyzeDocument TABLES, about 10x per page). Default `tables` for the demo documents, `text` for quick runs.
-- Cache raw Textract JSON in S3; re-use it on re-runs.
+- Textract async API (StartDocumentAnalysis / GetDocumentAnalysis) on PDFs in S3 under `raw/`. FeatureTypes is fixed to `LAYOUT` (about 0.004 USD per page): it gives reading order and headings, but no table cells, so `tables` stays empty and table text comes through as normal lines. Adding `TABLES` is compared in Tier 3.
+- Cache raw Textract JSON in S3 at `textract-cache/<sha256 of the PDF>.json`. On a cache hit Textract is not called.
 - Chunking: group lines into paragraphs per page, split by size (about 500 tokens, small overlap). Tables are kept whole and rendered as Markdown. Every chunk carries page and type metadata.
 
 ## 8. Security and operations
@@ -102,7 +102,7 @@ Pinecone vector metadata: `doc_id`, `source_file`, `page`, `chunk_type` (text | 
 - Lambda: Python 3.12, no VPC, no NAT Gateway. Keep dependencies small (`boto3` is built in; package `pydantic` and the Pinecone client). Do not package numpy.
 - Secrets: the Pinecone key is read from Secrets Manager at runtime. Terraform creates only the empty secret container.
 - Tag everything `Project=doc-rag-mock`. Provide `terraform destroy` and `scripts/cleanup.sh`. Set CloudWatch Logs retention to 7 days.
-- Cost guard: tell the user before running the first real pipeline on a PDF; use `text` mode for trial runs.
+- Cost guard: tell the user before running the first real pipeline on a PDF; use a small PDF for trial runs (cached results cost nothing).
 
 ## 11. Definition of done
 

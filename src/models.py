@@ -20,11 +20,15 @@ class DocumentStatus(StrEnum):
 
 
 class Line(BaseModel):
-    """One line of text. `top` and `height` are relative to the page (0..1), as in Textract."""
+    """One line of text. `top` and `height` are relative to the page (0..1), as in Textract.
+
+    `is_heading` is set when the extractor knows the line is a heading (Textract LAYOUT).
+    """
 
     text: str
     top: float = Field(ge=0)
     height: float = Field(ge=0)
+    is_heading: bool = False
 
 
 class Table(BaseModel):
