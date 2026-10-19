@@ -1,6 +1,6 @@
 """Answer a question: search (optionally reranked) -> generate -> answer with citations.
 
-Provider-neutral, so the CLI, the API (M5) and Lambda (M6) all call the same function.
+Provider-neutral, so the CLI and the API (M5) call the same function.
 """
 
 from src.indexing import search

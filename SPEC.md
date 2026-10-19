@@ -42,8 +42,8 @@ PDF uploaded to S3 (prefix incoming/)
        Retry: max 3 attempts, exponential backoff, on transient errors only
 
 FastAPI
-  POST /documents            register an S3 key and start the pipeline (Tier 1: runs inline/local)
-  GET  /documents/{doc_id}   processing status
+  POST /documents            register an S3 key and start the pipeline (Tier 1: runs inline/local)  [not implemented]
+  GET  /documents/{doc_id}   processing status  [not implemented]
   POST /ask                  {question, top_k} -> {answer, citations[{chunk_id, file, product, section, page, chunk_type}], generator, disclaimer}
   GET  /health               liveness + dependency checks (no secrets in output)
 ```
@@ -109,3 +109,20 @@ Pinecone vector metadata: `doc_id`, `source_file`, `page`, `chunk_type` (text | 
 - Tier 1: from a clean clone, README steps ingest one public PDF and answer a question with page citations; CI is green.
 - Tier 2 (priority): uploading a PDF to S3 triggers the workflow; status is visible in DynamoDB; a forced failure ends in FAILED after 3 attempts; everything is created and destroyed by Terraform.
 - README states honestly which components were actually run against real services.
+
+## 12. Differences from the implementation (as of M7)
+
+This spec is kept as written. Where the code differs, this list is the record.
+
+- Section 4, API: `POST /documents` and `GET /documents/{doc_id}` are not implemented. Ingestion starts from an S3 upload to `incoming/`, and the status is read from DynamoDB. Local ingestion uses the CLI (`scripts/extract_pdf.py`, `scripts/index_documents.py`), not the API.
+- Section 4, `/health`: returns the provider names only and calls no external service (no dependency checks), so it does not use the rerank quota or cost money.
+- Section 4, state names: the states are RegisterDocument -> StartExtraction -> Wait -> CheckExtraction -> SaveExtraction -> IndexDocument -> MarkIndexed / MarkFailed. Chunking, embedding and upsert run in one Lambda (IndexDocument).
+- Section 5: `BedrockTitanEmbedder` is not implemented (Bedrock is blocked); `PineconeInferenceEmbedder` is the only real embedder. A `Reranker` interface (Pinecone) and the `RERANKER` variable were added. `AnthropicApiGenerator` is implemented and verified, and replaces Bedrock for generation.
+- Section 6: the table is `doc-rag-mock-documents`. Only `RECEIVED`, `INDEXED` and `FAILED` are written (`EXTRACTING` and `CHUNKED` exist in the enum but are never set). Extra fields: `sha256`, `execution_arn`, `textract_cached`, `cause`. `attempts` counts executions for the document, not Step Functions retries.
+- Section 6: the Pinecone metadata `text` is stored whole (up to about 3,400 characters), not truncated.
+- Section 7: chunk size is 500 words (split on whitespace) with a 50-word overlap, as an approximation of tokens.
+- Sections 8 and 11: the S3 bucket existed before Terraform. Terraform manages only its EventBridge notification, so the bucket's encryption and public access block are not managed by Terraform, and `terraform destroy` does not remove the bucket.
+- Section 8, logging: the API logs request metadata only (no question text, by design). The Lambda handlers log one JSON line per step.
+- Section 9: CI also runs `ruff format --check`, the `docs/openapi.json` check, and builds the Lambda zip for `terraform validate`.
+- Section 3, Tier 3: done are the retrieval hit@k evaluation (without a keyword comparison) and the OpenAPI export. Not done: JWT check, LAYOUT vs TABLES comparison, VLM vs Textract.
+- Section 10: M4 is `/ask` (not `/query`).

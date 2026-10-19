@@ -1,15 +1,17 @@
 # doc-rag-pipeline
 
-A small learning prototype of an event-driven document-processing and RAG pipeline on AWS.
-It is not production software. See `SPEC.md` for scope.
+A small learning prototype of an event-driven document-processing and RAG pipeline on AWS,
+built with AI assistance (Claude Code). It is not production software. See `SPEC.md` for scope.
+A component is marked "verified" below only after a real call to the real service has succeeded.
 
 - **Public documents only.** The only inputs are product information documents published by
   the European Medicines Agency (EMA). No company-internal or proprietary data is used.
 - **Not medical advice.** This is a technical prototype. Its answers are not medical advice
   and must not be used for any clinical or treatment decision.
 
-Status: work in progress (milestone M5, local HTTP API; M6, the event-driven pipeline on AWS,
-is done). See "Verified components" for what has been run against real services.
+Status: milestones M0 to M6 are done, including M5 (local HTTP API and Docker image). M7 is
+this documentation pass. Bedrock is still blocked by an AWS account restriction, so answers are
+generated through the Anthropic API instead. See "Known limitations" for what is missing.
 
 ## Verified components
 
@@ -23,15 +25,81 @@ A component is marked "verified" only after a real call has succeeded.
 | Pinecone reranking (`bge-reranker-v2-m3`, top 50 vector hits) | verified 2026-10-19 (5 requests) |
 | Answering with `StubGenerator` (no generative model) over Pinecone retrieval + reranking | verified 2026-10-19 (5 evaluation questions) |
 | Event-driven pipeline, cache-hit path: S3 `incoming/` -> EventBridge -> Step Functions -> Lambda (Register -> Index) -> DynamoDB `INDEXED`, Pinecone namespace `pipeline` | verified 2026-10-19 (Cablivi, 39 pages, 138 chunks, same count as the M3 index; Textract skipped by the cache) |
-| Failure path for a non-retryable error: Catch -> `MarkFailed` (DynamoDB `FAILED` + error), no retry | verified 2026-10-19 (first run failed on a missing Lambda setting, `PINECONE_EMBED_MODEL`; a text file uploaded as `incoming/x.pdf` failed once in CheckExtraction with `TextractJobError` (`INVALID_IMAGE_TYPE`) and was not retried) |
 | Pipeline cache-miss path: StartExtraction -> Wait -> CheckExtraction -> SaveExtraction (writes the Textract cache) -> Index | verified 2026-10-19 (Cablivi medicine overview, 3 pages, 12 chunks; Textract finished within the first 10 s wait, so the IN_PROGRESS loop back to Wait has not run for real; the cache write did not start another execution) |
+| Failure path for a non-retryable error: Catch -> `MarkFailed` (DynamoDB `FAILED` + error), no retry | verified 2026-10-19 (first run failed on a missing Lambda setting, `PINECONE_EMBED_MODEL`; a text file uploaded as `incoming/x.pdf` failed once in CheckExtraction with `TextractJobError` (`INVALID_IMAGE_TYPE`) and was not retried) |
 | Retries of transient errors (3 attempts in total, then `FAILED`) | verified 2026-10-19 (forced with `force_fail_step = "index"`: IndexDocument ran 3 times, with waits of 2 s and 4 s, then MarkFailed set `FAILED` / `TransientError`; Pinecone was not touched) |
 | Lambda logs as JSON (`log_format = "JSON"`): every line in the log group is JSON; `step`, `status`, `document_id` and `execution_arn` are top-level fields | verified 2026-10-19 (read with `aws logs filter-log-events`; CloudWatch Logs Insights queries were not tried) |
 | HTTP API on 127.0.0.1 (FastAPI): `POST /ask` from the Swagger UI, `StubGenerator` over Pinecone retrieval + reranking; `GET /health` | verified 2026-10-19 (1 `/ask` request: 200 in 3.9 s; the citations included Cablivi 6.1 List of excipients, pages 10 and 11; the log line had no question text) |
-| Docker image of the API (`python:3.12-slim`, locked runtime dependencies, non-root) | verified 2026-10-19 (built locally, 392 MB; container started with `--env-file .env` and `/health` returned the Pinecone providers; `/ask` was not sent through the container; not pushed) |
+| `AnthropicApiGenerator` (Anthropic API, official SDK, `claude-haiku-5-5`) over Pinecone retrieval + reranking, via `POST /ask` from the Swagger UI | verified 2026-10-19 (1 `/ask` request: 200 in 5.7 s, of which generation 1.7 s; 712 input and 115 output tokens, `stop_reason` `end_turn`, 5 passages cited; the `[n]` marks matched the citations; the log had no question text, passage text, answer text or key) |
+| Docker image of the API (`python:3.12-slim`, locked runtime dependencies, non-root) | verified 2026-10-19 (rebuilt locally after the `anthropic` SDK was added to `uv.lock`, 415 MB, `anthropic` 1.15.0 in the image; container started with `--env-file .env` and `/health` returned `pinecone` for the embedder, vector store and reranker and `anthropic` for the generator; `/ask` was not sent through the container; not pushed) |
 | `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
-| `AnthropicApiGenerator` (Anthropic API, official SDK, `claude-haiku-5-5`) over Pinecone retrieval + reranking, via `POST /ask` from the Swagger UI | verified 2026-10-19 (1 `/ask` request: 200 in 5.7 s, of which generation 1.7 s; 712 input and 115 output tokens, `stop_reason` `end_turn`, 5 passages cited; the `[n]` marks matched the citations; the log had no question text, passage text, answer text or key) |
+
+## Architecture
+
+```
+Ingestion (M6, on AWS)
+  PDF -> S3 incoming/ -> EventBridge -> Step Functions -> Lambda
+      -> Textract (skipped on a cache hit) -> chunks -> Pinecone embeddings -> Pinecone index
+      -> status in DynamoDB (RECEIVED -> INDEXED | FAILED)
+
+Questions (M4/M5, local)
+  POST /ask (FastAPI on 127.0.0.1) -> answer_question()
+      -> embed the question -> Pinecone search (top 50) -> rerank -> top_k passages
+      -> generator (Anthropic API, or the stub) -> answer + citations + disclaimer
+```
+
+The same plain Python modules under `src/` are used by the CLI scripts, the API, and the
+Lambda handlers (which are thin wrappers). Every external service sits behind an interface in
+`src/providers/base.py`; the defaults are offline fakes. `docs/ARCHITECTURE.md` (Japanese)
+explains every file and design choice.
+
+## Setup
+
+Requires [uv](https://docs.astral.sh/uv/). Python 3.12 is installed by uv automatically.
+
+```
+uv sync
+cp .env.example .env   # optional; defaults use offline fakes
+```
+
+## Documents
+
+Public documents only. PDFs are not committed; download them into `data/pdfs/` (git-ignored).
+
+| File | Pages | Source (EMA EPAR page, "Product information") |
+|---|---|---|
+| `cablivi-epar-product-information_en.pdf` | 39 | https://www.ema.europa.eu/en/medicines/human/EPAR/cablivi |
+| `aubagio-epar-product-information_en.pdf` | 50 | https://www.ema.europa.eu/en/medicines/human/EPAR/aubagio |
+
+## Extract one PDF with Textract
+
+Costs about 0.004 USD per page on the first run (AnalyzeDocument LAYOUT, us-east-1; check the
+AWS pricing page). The raw JSON is cached in S3 by the PDF's sha256, so re-running the same
+PDF does not call Textract again. The script asks before starting a paid job.
+
+```
+# .env needs AWS_PROFILE, AWS_REGION and S3_BUCKET
+uv run --env-file .env python -m scripts.extract_pdf data/pdfs/<file>.pdf
+```
+
+Output: `data/extracted/<doc_id>.json` (an `ExtractedDocument`).
+
+## Index and search with Pinecone
+
+Uses the Pinecone free (Starter) plan: a dense serverless index (1024 dims, cosine, aws
+us-east-1) and the hosted Inference API. Textract is not called; the input is the cached
+`data/extracted/*.json`. One full index of the 2 documents uses about 68,000 embedding tokens
+(free plan: 5M per month). One index uses one embedding model; switching models requires
+re-indexing everything.
+
+```
+# .env needs PINECONE_API_KEY, PINECONE_INDEX, PINECONE_EMBED_MODEL
+# and, for --rerank, PINECONE_RERANK_MODEL (no defaults in code)
+uv run --env-file .env python -m scripts.index_documents          # asks before writing
+uv run --env-file .env python -m scripts.search "Can Aubagio be used during pregnancy?" --rerank
+uv run --env-file .env python -m scripts.eval_retrieval --rerank  # hit@5 / recall@5
+```
 
 ## Retrieval quality
 
@@ -47,9 +115,6 @@ chosen by the developer, so these numbers show a trend, not a benchmark.
 | Heading no longer repeated; batches sorted by length (token cost only) | 1/5 | 0.15 |
 | Embedded text "Product \| section: body" (product from the EMA file name) | 4/5 | 0.45 |
 | Same, plus reranking of the top 50 vector hits | 5/5 | 0.85 |
-
-Known weakness: the leaflet's table of contents chunk ("What is in this leaflet") ranks high
-for many questions without reranking. It has not been removed.
 
 ## Answering questions
 
@@ -78,24 +143,26 @@ first line. It lists every retrieved chunk (`top_k`, default 5) as a numbered pa
 source. It cannot judge whether the passages actually answer the question; it reports
 "No relevant passages were found." only when retrieval returns nothing.
 
-`BedrockClaudeGenerator` instructs the model to answer only from the given passages, to reply
-"I don't know based on the provided documents." when they do not contain the answer, and to
-cite passages as `[n]`. It needs `BEDROCK_INFERENCE_PROFILE_ID` (an inference profile ID, not
-a bare model ID). It has not been run against Bedrock.
+`AnthropicApiGenerator` instructs Claude, through the Anthropic API with the official
+`anthropic` SDK, to answer only from the given passages, to reply "I don't know based on the
+provided documents." when they do not contain the answer, and to cite passages as `[n]` (the
+prompt is in `src/prompting.py`). Bedrock was blocked by an account restriction, so the
+generator adapter was swapped: `GENERATOR=anthropic` is the only change, and the API code is
+the same. It needs `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` (no default in code;
+`claude-haiku-5-5` is the suggested model). The citations are not written by the model: they
+are every retrieved passage in retrieval order, so `[n]` in the answer is always the n-th
+citation. A reply cut off at the token limit, or refused, is an error (502), never a partial
+answer. The log line per call has the model name and token counts only.
 
-`AnthropicApiGenerator` sends the same prompt (`src/prompting.py`) to Claude through the
-Anthropic API with the official `anthropic` SDK. Bedrock was blocked by an account
-restriction, so the generator adapter was swapped: `GENERATOR=anthropic` is the only change,
-and the API code is the same. It needs `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` (no default
-in code; `claude-haiku-5-5` is the suggested model). The citations are not written by the
-model: they are every retrieved passage in retrieval order, so `[n]` in the answer is always
-the n-th citation. A reply cut off at the token limit, or refused, is an error (502), never a
-partial answer. The log line per call has the model name and token counts only.
+`BedrockClaudeGenerator` uses the same prompt through the Bedrock Converse API. It needs
+`BEDROCK_INFERENCE_PROFILE_ID` (an inference profile ID, not a bare model ID). It has not been
+run against Bedrock.
 
 Result on the 5 evaluation questions (StubGenerator, Pinecone + reranking, `top_k=5`): 5/5
 answers cite at least one expected chunk; the mean share of expected chunks cited is 0.85.
 This matches retrieval hit@5 with reranking, because the stub cites every retrieved chunk.
-One run used 66 embedding tokens and 5 rerank requests.
+One run used 66 embedding tokens and 5 rerank requests. The evaluation has not been run with
+the Anthropic generator.
 
 ## HTTP API (M5)
 
@@ -115,7 +182,7 @@ Settings for the demo, in `.env` (see `.env.example`):
 | `EMBEDDER` | `pinecone` | must match the index (one index, one embedder) |
 | `VECTOR_STORE` | `pinecone` | |
 | `RERANKER` | `pinecone` | one rerank request per `/ask` (free plan: 500 per month) |
-| `GENERATOR` | `stub` | no generative model; swapped by this variable alone (`anthropic` also needs `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`) |
+| `GENERATOR` | `anthropic` | also needs `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` (`claude-haiku-5-5`). Use `stub` to run without an Anthropic key (no generative model). |
 | `PINECONE_NAMESPACE` | `__default__` | required, no default in code; `__default__` is the default namespace (the M3 data) |
 
 The Pinecone settings from "Index and search with Pinecone" are also needed:
@@ -130,12 +197,13 @@ uv run --env-file .env python -m src.api      # http://127.0.0.1:8000/docs
 Demo steps:
 
 1. Open `http://127.0.0.1:8000/health` and check that `embedder`, `vector_store` and
-   `reranker` are `pinecone` and `generator` is `stub`. The startup log line shows the same
-   names.
+   `reranker` are `pinecone` and `generator` is `anthropic`. The startup log line shows the
+   same names.
 2. Open `http://127.0.0.1:8000/docs`, choose `POST /ask`, then "Try it out" and "Execute" with
    the example question "What are the excipients of Cablivi?".
-3. The answer lists the retrieved passages with their citations (product, section, page,
-   chunk ID) and the disclaimer.
+3. The answer is a short text with `[n]` marks; `[n]` is the n-th entry in `citations`
+   (product, section, page, chunk ID). Check that `generator` is `anthropic` and that the
+   disclaimer is there. The verified request cost about 0.0001 USD with `claude-haiku-5-5`.
 
 Input and errors:
 
@@ -156,7 +224,9 @@ uv run python -m scripts.export_openapi           # write docs/openapi.json
 uv run python -m scripts.export_openapi --check   # what CI runs
 ```
 
-Docker (local only; the image is never pushed to a registry):
+### Docker
+
+Local only; the image is never pushed to a registry.
 
 ```
 docker build -t doc-rag-api .
@@ -166,13 +236,10 @@ docker run --rm -p 127.0.0.1:8000:8000 --env-file .env doc-rag-api
 Inside the container the server listens on `0.0.0.0`, which port publishing needs.
 `-p 127.0.0.1:8000:8000` publishes it on the host's loopback only. `.dockerignore` is an
 allow-list (`pyproject.toml`, `uv.lock`, `.python-version`, `src/`), so `.env` is never copied
-into the image. Settings come from `--env-file` at run time, so the Pinecone key is in the
+into the image. Settings come from `--env-file` at run time, so the API keys are in the
 container's environment while it runs. This is fine for a local demo only. Docker's
 `--env-file` does not remove quotes, so write values in `.env` without quotes. The image
 installs only the locked runtime dependencies (no dev tools) and runs as a non-root user.
-Startup took 20 to 40 seconds in the container (a few seconds outside Docker). Python imports
-take 1.6 s, so most of the time is spent building the Pinecone clients. The cause has not
-been investigated.
 
 ## Event-driven pipeline on AWS (M6)
 
@@ -189,8 +256,9 @@ PDF -> s3://$S3_BUCKET/incoming/
        any failure        -> MarkFailed: DynamoDB status FAILED, error, cause
 ```
 
-States, retries and failure handling are in `infra/statemachine.asl.json`. All the AWS
-resources are in `infra/` (Terraform, local state). Transient errors are retried (3 attempts
+States, retries and failure handling are in `infra/statemachine.asl.json`. The pipeline's AWS
+resources are in `infra/` (Terraform, local state); the S3 bucket already existed and only its
+EventBridge notification is managed by Terraform. Transient errors are retried (3 attempts
 in total, waiting 2 s and then 4 s). Other errors, such as a failed Textract job, go to
 `FAILED` without a retry. Only IDs and counts pass between states (the limit is 256 KB). The
 Textract result itself goes through the S3 cache. The pipeline writes to the Pinecone namespace
@@ -249,11 +317,42 @@ tokens).
 | Cablivi SmPC, 39 pages, cache hit | 8 s | RegisterDocument 1.9 s (116 of 256 MB); IndexDocument, 138 chunks, 3.9 s (158 of 1024 MB) |
 | Cablivi medicine overview, 3 pages, cache miss | 27 s | Textract finished within the first 10 s wait; StartExtraction and CheckExtraction used 104 of 128 MB (since raised to 256 MB); SaveExtraction used 116 of 1024 MB |
 
-### Known limitations
+### Clean up
+
+```
+uv run --env-file .env -- scripts/cleanup.sh
+```
+
+It asks before each step. The steps are: delete the Pinecone namespace `pipeline`, delete the
+objects under `incoming/`, then run `terraform destroy`, which also removes the DynamoDB table
+and the bucket's EventBridge notification. `raw/` and `textract-cache/` are kept. At the end
+it prints the manual root steps for removing the deployer policy from the `rag-mock` user.
+
+## Known limitations
+
+### Retrieval and answers
 
 - The product name comes only from EMA file names (`<product>-epar-product-information...`).
   For any other name it is empty and is not guessed. Chunks from such files (for example the
   "medicine overview" PDF) are embedded without the product name, which can lower retrieval.
+- The leaflet's table of contents chunk ("What is in this leaflet") ranks high for many
+  questions without reranking. It has not been removed.
+- In answers, the same ingredient list from the labelling section (for example
+  "3. LIST OF EXCIPIENTS" on several pack labels) can fill the top places. Near-duplicate
+  passages are not removed yet.
+- `StubGenerator` cannot judge whether the passages answer the question.
+- The evaluation set has 5 questions, and its expected chunks were chosen by the developer.
+
+### API and Docker
+
+- No authentication. The API is for a local demo on `127.0.0.1` only.
+- Startup in the container varied: 20 to 40 seconds in the first checks, about 6 seconds after
+  the rebuild (a few seconds outside Docker). Python imports take 1.6 s, so most of the time is
+  spent building the Pinecone clients. The cause has not been investigated.
+- `/ask` has not been sent through the container.
+
+### Pipeline (M6)
+
 - Errors raised by the Pinecone client are not classified as transient, so for example a
   Pinecone 5xx makes the document `FAILED` at once instead of being retried.
 - If RegisterDocument fails, the run has no `doc_id` yet (the PDF was not hashed), so the
@@ -271,67 +370,16 @@ tokens).
   MarkIndexed writes it from Step Functions without a Lambda.
 - EventBridge has no dead-letter queue. A failed start shows only in the rule's
   `FailedInvocations` metric.
-- In answers, the same ingredient list from the labelling section (for example
-  "3. LIST OF EXCIPIENTS" on several pack labels) can fill the top places. Near-duplicate
-  passages are not removed yet.
 
-### Clean up
+### Not built
 
-```
-uv run --env-file .env -- scripts/cleanup.sh
-```
-
-It asks before each step. The steps are: delete the Pinecone namespace `pipeline`, delete the
-objects under `incoming/`, then run `terraform destroy`, which also removes the DynamoDB table
-and the bucket's EventBridge notification. `raw/` and `textract-cache/` are kept. At the end
-it prints the manual root steps for removing the deployer policy from the `rag-mock` user.
-
-## Documents
-
-Public documents only. PDFs are not committed; download them into `data/pdfs/` (git-ignored).
-
-| File | Pages | Source (EMA EPAR page, "Product information") |
-|---|---|---|
-| `cablivi-epar-product-information_en.pdf` | 39 | https://www.ema.europa.eu/en/medicines/Human/EPAR/cablivi |
-| `aubagio-epar-product-information_en.pdf` | 50 | https://www.ema.europa.eu/en/medicines/human/EPAR/aubagio |
-
-## Extract one PDF with Textract
-
-Costs about 0.004 USD per page on the first run (AnalyzeDocument LAYOUT, us-east-1; check the
-AWS pricing page). The raw JSON is cached in S3 by the PDF's sha256, so re-running the same
-PDF does not call Textract again. The script asks before starting a paid job.
-
-```
-# .env needs AWS_PROFILE, AWS_REGION and S3_BUCKET
-uv run --env-file .env python -m scripts.extract_pdf data/pdfs/<file>.pdf
-```
-
-Output: `data/extracted/<doc_id>.json` (an `ExtractedDocument`).
-
-## Index and search with Pinecone
-
-Uses the Pinecone free (Starter) plan: a dense serverless index (1024 dims, cosine, aws
-us-east-1) and the hosted Inference API. Textract is not called; the input is the cached
-`data/extracted/*.json`. One full index of the 2 documents uses about 68,000 embedding tokens
-(free plan: 5M per month). One index uses one embedding model; switching models requires
-re-indexing everything.
-
-```
-# .env needs PINECONE_API_KEY, PINECONE_INDEX, PINECONE_EMBED_MODEL
-# and, for --rerank, PINECONE_RERANK_MODEL (no defaults in code)
-uv run --env-file .env python -m scripts.index_documents          # asks before writing
-uv run --env-file .env python -m scripts.search "Can Aubagio be used during pregnancy?" --rerank
-uv run --env-file .env python -m scripts.eval_retrieval --rerank  # hit@5 / recall@5
-```
-
-## Setup
-
-Requires [uv](https://docs.astral.sh/uv/). Python 3.12 is installed by uv automatically.
-
-```
-uv sync
-cp .env.example .env   # optional; defaults use offline fakes
-```
+- Bedrock: `BedrockClaudeGenerator` is not verified (account restriction), and the Titan
+  embedder in `SPEC.md` was not written.
+- `POST /documents` and `GET /documents/{doc_id}` from `SPEC.md` are not implemented. Ingestion
+  starts from an S3 upload, and the status is read from DynamoDB.
+- Tier 3 items not done: JWT check on the API, LAYOUT vs TABLES comparison, VLM vs Textract,
+  vector vs keyword retrieval comparison.
+- `SPEC.md` section 12 lists every difference between the spec and the code.
 
 ## Test and lint
 

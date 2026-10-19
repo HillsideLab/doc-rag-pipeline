@@ -46,7 +46,7 @@
 - `scripts/eval_retrieval.py`: 評価の質問を本物の Pinecone で検索し、hit@k と recall@k を表示する CLI (`--rerank` でリランクあり)。読み取りのみ。
 - `tests/test_evaluation.py`: hit@k / recall@k の計算と、質問ファイルの形式のテスト。
 - `src/citations.py`: チャンクから出典 (chunk_id、ファイル、製品名、section、ページ、種類) と、回答やプロンプトに出す 1 行の表示を作る。すべての Generator が使う。
-- `src/answering.py`: 質問応答の本体 `answer_question` (検索 → 生成 → 免責の文を付ける)。CLI、API (M5)、Lambda (M6) から同じ関数を呼ぶ。
+- `src/answering.py`: 質問応答の本体 `answer_question` (検索 → 生成 → 免責の文を付ける)。CLI と API (M5) から同じ関数を呼ぶ (Lambda は取り込みだけで、この関数は呼ばない)。
 - `src/providers/factory.py`: 環境変数 `EMBEDDER` / `VECTOR_STORE` / `RERANKER` / `GENERATOR` から実装を選ぶ。既定はすべてフェイク。API 用に、選んだ名前だけを返す `selected()` と、`PINECONE_NAMESPACE` を読む `pinecone_namespace()` (必須、`__default__` は default namespace) も持つ。
 - `src/providers/bedrock.py`: Generator の Bedrock Claude 実装 (Converse API、推論プロファイル ID)。**未検証** (アカウントの制限で Bedrock を呼べないため、フェイクのクライアントでのみテスト)。
 - `src/prompting.py`: 生成モデルに渡すプロンプト (system の規則、番号付きの文章と質問) と、回答の `[n]` を読む関数。Bedrock と Anthropic API の Generator が共有する。
@@ -156,7 +156,7 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 目次のチャンク (`What is in this leaflet`) を除く対策はまだ行っていない。
 
 ### 質問応答と出典 (M4)
-1. 流れは `answer_question`: 質問を埋め込み → 検索 (任意でリランク) → Generator が回答を作る → `disclaimer` を付ける。業務ロジックは `src/` にあり、CLI・API・Lambda は呼ぶだけ。
+1. 流れは `answer_question`: 質問を埋め込み → 検索 (任意でリランク) → Generator が回答を作る → `disclaimer` を付ける。業務ロジックは `src/` にあり、CLI と API は呼ぶだけ。
 2. 出典はチャンク 1 つにつき 1 件で、`chunk_id`、`file`、`product`、`section`、`page`、`chunk_type` を持つ。同じページの 2 チャンクも別の出典にする。製品名は埋め込みと同じく EMA のファイル名から取り、合わなければ空にする (推測しない)。
 3. `Answer.generator` に回答を作った実装の名前 (`stub` など) を入れる。生成モデルを使ったかどうかを、本文を読まずに判定できるようにするため。Bedrock は `bedrock` とだけ書く。推論プロファイルの ARN にはアカウント ID が入るため。
 4. 免責の文 (医療上の助言ではない) は本文に混ぜず、`Answer.disclaimer` に毎回入れる。`answer_question` で付けるので、どの Generator でも同じ文になり、モデルの出力にも頼らない。評価や本文も汚れない。
@@ -215,10 +215,15 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 15. MarkFailed は前回の `page_count` / `chunk_count` を消す。INDEXED の後に FAILED になった項目で、古い件数が今回の結果に見えないようにするため。
 16. Lambda のログ形式は JSON (`logging_config`)。本番で確認済み (2026-10-19): ロググループの全行が JSON で、START / REPORT も `platform.start` / `platform.report` の JSON になる (メモリは `record.metrics.maxMemoryUsedMB`)。ハンドラの行は `logging_json.py` の形のままで、`step` / `status` / `document_id` / `execution_arn` が `message` の中の文字列ではなく最上位の項目として入る。自前の行には時刻と requestId がない (時刻は CloudWatch の `@timestamp` で並べる)。`status` は工程の状態 (STARTED / SUCCEEDED / FAILED) で、文書の `INDEXED` は DynamoDB にだけある (MarkIndexed は Lambda を通らない)。Logs Insights でのクエリは、権限を付けていないため試していない。
 17. 本番で確かめたこと: キャッシュあり / なしの経路、一時的なエラーの再試行 (計 3 回、待ち 2 秒・4 秒)、再試行しない失敗 (設定の不足、Textract の `INVALID_IMAGE_TYPE`)。Wait に戻るループ (IN_PROGRESS) は、Textract が最初の 10 秒で終わったため本番では通っていない。
-18. API (M5) は `answer_question` を包むだけの薄い層にした。入力は API 用の `AskRequest`、応答はコアの `Answer` (もともと Pydantic) をそのまま使う。コアのモデルを変えると API の契約も変わるが、`docs/openapi.json` の一致チェックで CI が気づく。
-19. API には認証がないので、`127.0.0.1` だけで待ち受ける。手元のデモ専用で、本番向けではない。
-20. API の provider は起動時に組み立てる。設定の不足 (キー、namespace、モデル名) は最初のリクエストではなく起動時に、変数名入りのエラーで止まる。生成は `GENERATOR` の切り替えだけで差し替えられる (API は `factory.build_generator()` を呼ぶだけ)。
-21. 外部サービスのエラーは 502 にし、決まった文と `request_id` だけを返す。SDK の例外の文にはインデックス名やリクエストの中身が入ることがあるので、ログにもクラス名だけを出す。`/health` は外部サービスを呼ばない (リランクの無料枠と費用を使わないため)。
-22. Pinecone の namespace は `PINECONE_NAMESPACE` で決める (必須)。default namespace は空文字だと「未設定」と区別できないので、Pinecone のコンソールの表記に合わせて `__default__` と書く。
-23. 本物で確認したこと (2026-10-19): Swagger UI から `/ask` を 1 回 (200、3.9 秒、出典に Cablivi の 6.1 List of excipients の 10 ページと 11 ページ)。ログに質問文は出ていない。上位 3 件はラベル表示の「3. LIST OF EXCIPIENTS」のほぼ同じ文で、重複の除去はまだしていない。
-24. Docker のコンテナ内では `0.0.0.0` で待ち受ける (ポートの公開に必要)。ホスト側は `-p 127.0.0.1:8000:8000` で loopback だけに公開する。設定は実行時の `--env-file` で渡し、イメージには入れない。確認済み (2026-10-19): ビルド (392 MB) と、コンテナでの起動と `/health`。コンテナ経由の `/ask` は送っていない。コンテナでは起動に 20〜40 秒かかった (import は 1.6 秒なので、Pinecone のクライアントを作る部分。原因は未調査)。
+
+### HTTP API (M5)
+1. API (M5) は `answer_question` を包むだけの薄い層にした。入力は API 用の `AskRequest`、応答はコアの `Answer` (もともと Pydantic) をそのまま使う。コアのモデルを変えると API の契約も変わるが、`docs/openapi.json` の一致チェックで CI が気づく。
+2. API には認証がないので、`127.0.0.1` だけで待ち受ける。手元のデモ専用で、本番向けではない。
+3. API の provider は起動時に組み立てる。設定の不足 (キー、namespace、モデル名) は最初のリクエストではなく起動時に、変数名入りのエラーで止まる。生成は `GENERATOR` の切り替えだけで差し替えられる (API は `factory.build_generator()` を呼ぶだけ)。
+4. 外部サービスのエラーは 502 にし、決まった文と `request_id` だけを返す。SDK の例外の文にはインデックス名やリクエストの中身が入ることがあるので、ログにもクラス名だけを出す。`/health` は外部サービスを呼ばない (リランクの無料枠と費用を使わないため)。
+5. Pinecone の namespace は `PINECONE_NAMESPACE` で決める (必須)。default namespace は空文字だと「未設定」と区別できないので、Pinecone のコンソールの表記に合わせて `__default__` と書く。
+6. 本物で確認したこと (2026-10-19): Swagger UI から `/ask` を 1 回 (200、3.9 秒、出典に Cablivi の 6.1 List of excipients の 10 ページと 11 ページ)。ログに質問文は出ていない。上位 3 件はラベル表示の「3. LIST OF EXCIPIENTS」のほぼ同じ文で、重複の除去はまだしていない。
+
+### Docker
+1. Docker のコンテナ内では `0.0.0.0` で待ち受ける (ポートの公開に必要)。ホスト側は `-p 127.0.0.1:8000:8000` で loopback だけに公開する。設定は実行時の `--env-file` で渡し、イメージには入れない。確認済み (2026-10-19): ビルド (392 MB) と、コンテナでの起動と `/health`。コンテナ経由の `/ask` は送っていない。コンテナでは起動に 20〜40 秒かかった (import は 1.6 秒なので、Pinecone のクライアントを作る部分。原因は未調査)。
+2. `anthropic` を依存に加えた後に作り直して確認した (2026-10-19): 415 MB、イメージ内の `anthropic` は 1.15.0。コンテナを `--env-file .env` で起動し、`/health` で embedder・vector_store・reranker が `pinecone`、generator が `anthropic` であることを確かめた。起動は約 6 秒 (最初の確認の 20〜40 秒との違いの原因は未調査)。コンテナ経由の `/ask` は今回も送っていない。
