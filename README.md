@@ -31,7 +31,7 @@ A component is marked "verified" only after a real call has succeeded.
 | Docker image of the API (`python:3.12-slim`, locked runtime dependencies, non-root) | verified 2026-10-19 (built locally, 392 MB; container started with `--env-file .env` and `/health` returned the Pinecone providers; `/ask` was not sent through the container; not pushed) |
 | `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
-| `AnthropicApiGenerator` (Anthropic API, official SDK) | **not verified yet**: unit-tested with a fake client only |
+| `AnthropicApiGenerator` (Anthropic API, official SDK, `claude-haiku-5-5`) over Pinecone retrieval + reranking, via `POST /ask` from the Swagger UI | verified 2026-10-19 (1 `/ask` request: 200 in 5.7 s, of which generation 1.7 s; 712 input and 115 output tokens, `stop_reason` `end_turn`, 5 passages cited; the `[n]` marks matched the citations; the log had no question text, passage text, answer text or key) |
 
 ## Retrieval quality
 
@@ -65,7 +65,7 @@ Providers are chosen by environment variables; the defaults need no network and 
 | `EMBEDDER` | `fake`, `pinecone` | `fake` |
 | `VECTOR_STORE` | `memory`, `pinecone` (needs `EMBEDDER=pinecone`) | `memory` |
 | `RERANKER` | `none`, `pinecone` | `none` |
-| `GENERATOR` | `stub`, `bedrock` (not verified), `anthropic` (not verified yet) | `stub` |
+| `GENERATOR` | `stub`, `bedrock` (not verified), `anthropic` | `stub` |
 
 ```
 export EMBEDDER=pinecone VECTOR_STORE=pinecone RERANKER=pinecone GENERATOR=stub
