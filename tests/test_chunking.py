@@ -96,6 +96,55 @@ def test_line_marked_as_heading_starts_new_chunk_without_number() -> None:
     ]
 
 
+def test_heading_only_chunk_is_prepended_to_next_chunk() -> None:
+    doc = make_doc(make_page(["4. CLINICAL PARTICULARS"], ["4.1 Indications", "Adults only."]))
+    chunks = chunk_document(doc)
+    assert [(c.chunk_id, c.section, c.text) for c in chunks] == [
+        ("d:p1:c0", "4.1 Indications", "4. CLINICAL PARTICULARS 4.1 Indications Adults only."),
+    ]
+
+
+def test_heading_only_chunk_moves_to_next_page() -> None:
+    page_1 = Page(
+        page_number=1,
+        lines=[
+            Line(text="Body text.", top=0.1, height=LINE_HEIGHT),
+            Line(text="A. LABELLING", top=0.4, height=LINE_HEIGHT, is_heading=True),
+        ],
+    )
+    doc = make_doc(page_1, make_page(["Carton text."], page_number=2))
+    chunks = chunk_document(doc)
+    assert [(c.chunk_id, c.page, c.section, c.text) for c in chunks] == [
+        ("d:p1:c0", 1, "", "Body text."),
+        ("d:p2:c0", 2, "A. LABELLING", "A. LABELLING Carton text."),
+    ]
+
+
+def test_heading_before_cover_page_stays_on_its_own_page() -> None:
+    cover = Page(
+        page_number=2,
+        lines=[Line(text="A. LABELLING", top=0.4, height=LINE_HEIGHT, is_heading=True)],
+    )
+    doc = make_doc(
+        make_page(["Body text."], ["3. To encourage reading"], page_number=1),
+        cover,
+        make_page(["Carton text."], page_number=3),
+    )
+    chunks = chunk_document(doc)
+    assert [(c.chunk_id, c.section, c.text) for c in chunks] == [
+        ("d:p1:c0", "", "Body text."),
+        ("d:p1:c1", "3. To encourage reading", "3. To encourage reading"),
+        ("d:p3:c0", "A. LABELLING", "A. LABELLING Carton text."),
+    ]
+
+
+def test_heading_with_short_body_stays_its_own_chunk() -> None:
+    doc = make_doc(make_page(["6.2 Incompatibilities", "None known."], ["6.3 Shelf life"]))
+    chunks = chunk_document(doc)
+    # The last heading has nothing after it, so it is kept as it is.
+    assert [c.text for c in chunks] == ["6.2 Incompatibilities None known.", "6.3 Shelf life"]
+
+
 def test_lowercase_after_number_is_not_a_heading() -> None:
     doc = make_doc(make_page(["4.2 Posology"], ["2 tablets daily"]))
     chunks = chunk_document(doc)
@@ -105,7 +154,7 @@ def test_lowercase_after_number_is_not_a_heading() -> None:
 
 def test_section_carries_over_to_next_page() -> None:
     doc = make_doc(
-        make_page(["4.8 Undesirable effects"], page_number=1),
+        make_page(["4.8 Undesirable effects", "Headache is common."], page_number=1),
         make_page(["continued text"], page_number=2),
     )
     chunks = chunk_document(doc)

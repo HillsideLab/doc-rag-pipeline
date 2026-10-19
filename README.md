@@ -1,10 +1,15 @@
 # doc-rag-pipeline
 
 A small learning prototype of an event-driven document-processing and RAG pipeline on AWS.
-It uses public documents only and is not production software. See `SPEC.md` for scope.
+It is not production software. See `SPEC.md` for scope.
 
-Status: work in progress (milestone M2, Textract extraction). No component has been verified
-against real services yet.
+- **Public documents only.** The only inputs are product information documents published by
+  the European Medicines Agency (EMA). No company-internal or proprietary data is used.
+- **Not medical advice.** This is a technical prototype. Its answers are not medical advice
+  and must not be used for any clinical or treatment decision.
+
+Status: work in progress (milestone M2, Textract extraction). See "Verified components" for
+what has been run against real services.
 
 ## Verified components
 
@@ -12,14 +17,17 @@ A component is marked "verified" only after a real call has succeeded.
 
 | Component | Status |
 |---|---|
-| Textract (AnalyzeDocument LAYOUT, async) + S3 cache | not verified yet |
+| Textract (AnalyzeDocument LAYOUT, async) + S3 cache | verified 2026-10-19 (Cablivi 39 pages, Aubagio 50 pages; re-run served from the cache) |
 | Bedrock | blocked by an AWS account restriction |
 
 ## Documents
 
 Public documents only. PDFs are not committed; download them into `data/pdfs/` (git-ignored).
 
-- (to be added: download links for the 2 to 3 public PDFs used)
+| File | Pages | Source (EMA EPAR page, "Product information") |
+|---|---|---|
+| `cablivi-epar-product-information_en.pdf` | 39 | https://www.ema.europa.eu/en/medicines/Human/EPAR/cablivi |
+| `aubagio-epar-product-information_en.pdf` | 50 | https://www.ema.europa.eu/en/medicines/human/EPAR/aubagio |
 
 ## Extract one PDF with Textract
 

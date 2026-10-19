@@ -25,6 +25,8 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true", help="do not ask before running Textract")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    # botocore logs where it found credentials at INFO; keep only its warnings and errors.
+    logging.getLogger("botocore").setLevel(logging.WARNING)
 
     pdf: Path = args.pdf
     sha256 = hashlib.sha256(pdf.read_bytes()).hexdigest()
