@@ -19,6 +19,23 @@ Asking a question from the Swagger UI (`/docs`) returns an answer with numbered 
 marks and the list of cited passages. Checked on 2026-10-19 against the real Pinecone index
 and the Anthropic API.
 
+### More examples
+
+Run on 2026-10-19 against the real Pinecone index and the Anthropic API (`claude-haiku-5-5`).
+The medical content of the answers has not been checked.
+
+![Question: What is Aubagio used for? Answer: AUBAGIO is used in adults and in children and adolescents (10 years of age and older) to treat relapsing remitting multiple sclerosis (MS) \[1\]\[4\].](docs/images/ask-aubagio.png)
+
+The answer cites the patient leaflet ("What AUBAGIO is used for", [1]) and the SmPC section
+for health professionals (4.1 Therapeutic indications, [4]). The fourth citation is below the
+visible part of the screenshot.
+
+![Question: What is the price of Cablivi in Spain? Answer: I don't know based on the provided documents.](docs/images/ask-dont-know.png)
+
+The price is not in the product information, so the model answered that it does not know
+instead of making something up. The citations still list the search results, so it is clear
+what was searched.
+
 ## Verified components
 
 A component is marked "verified" only after a real call has succeeded.
@@ -348,6 +365,13 @@ it prints the manual root steps for removing the deployer policy from the `rag-m
   passages are not removed yet.
 - `StubGenerator` cannot judge whether the passages answer the question.
 - The evaluation set has 5 questions, and its expected chunks were chosen by the developer.
+- Lines such as an address can be read as a section name (for example "9052 Zwijnaarde"),
+  so a citation can show the wrong section.
+- Search always returns the top `top_k` passages, even when they are only loosely related.
+  There is no minimum rerank score yet; for now the generator's "I don't know" answer is
+  what stops an unsupported answer.
+- When the answer is "I don't know", the citations still list the search results, which can
+  confuse a first-time reader.
 
 ### API and Docker
 
