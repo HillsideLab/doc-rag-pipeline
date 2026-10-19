@@ -14,6 +14,8 @@ VARIABLES = (
     "PINECONE_INDEX",
     "PINECONE_NAMESPACE",
     "BEDROCK_INFERENCE_PROFILE_ID",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_MODEL",
 )
 
 
@@ -81,6 +83,29 @@ def test_bedrock_without_profile_id_fails(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("GENERATOR", "bedrock")
     with pytest.raises(RuntimeError, match="BEDROCK_INFERENCE_PROFILE_ID"):
         factory.build_generator()
+
+
+def test_anthropic_without_key_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GENERATOR", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "m")  # so the missing key is what fails
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        factory.build_generator()
+
+
+def test_anthropic_without_model_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GENERATOR", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with pytest.raises(RuntimeError, match="ANTHROPIC_MODEL"):
+        factory.build_generator()
+
+
+def test_anthropic_generator_is_built(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.providers.anthropic_api import AnthropicApiGenerator
+
+    monkeypatch.setenv("GENERATOR", "Anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "m")
+    assert isinstance(factory.build_generator(), AnthropicApiGenerator)
 
 
 def test_selected_names_follow_the_variables(monkeypatch: pytest.MonkeyPatch) -> None:

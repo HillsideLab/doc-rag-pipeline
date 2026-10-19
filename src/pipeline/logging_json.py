@@ -2,7 +2,8 @@
 
 Every Lambda line carries document_id, execution_arn, step and status, so one document can be
 followed through CloudWatch Logs. API lines carry request_id, method, path, status_code and
-duration_ms; the startup line carries the provider names. Only the message and these named
+duration_ms; the startup line carries the provider names; the Anthropic API generator adds the
+model name and token counts. Only the message and these named
 fields are written: never the event, the question, the API key, document text, or exception
 arguments.
 """
@@ -29,8 +30,24 @@ FIELDS = (
     "vector_store",
     "reranker",
     "generator",
+    # Anthropic API generator: one line per call, names and numbers only
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "stop_reason",
+    "cited_passages",
 )
-QUIET_LOGGERS = ("botocore", "boto3", "urllib3", "httpx", "httpcore", "pinecone")
+QUIET_LOGGERS = (
+    "botocore",
+    "boto3",
+    "urllib3",
+    "httpx",
+    "httpcore",
+    "httpx2",
+    "httpcore2",
+    "anthropic",
+    "pinecone",
+)
 
 logger = logging.getLogger("pipeline")
 

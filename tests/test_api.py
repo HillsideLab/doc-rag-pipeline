@@ -1,7 +1,10 @@
 """HTTP API with FastAPI's TestClient and fakes only: no network, no environment needed."""
 
 import logging
+from types import SimpleNamespace
 
+import anthropic
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
@@ -10,6 +13,7 @@ from src.answering import DISCLAIMER
 from src.api.main import UPSTREAM_ERROR, Services, create_app
 from src.models import Chunk, SearchHit
 from src.pipeline.logging_json import JsonFormatter
+from src.providers.anthropic_api import AnthropicApiGenerator
 from src.providers.fakes import FakeEmbedder, InMemoryStore, StubGenerator
 
 CABLIVI = "cablivi-epar-product-information_en.pdf"
@@ -113,6 +117,27 @@ def test_upstream_error_is_502_without_internal_details() -> None:
     assert body == {"detail": UPSTREAM_ERROR, "request_id": response.headers["X-Request-ID"]}
     assert "secret-key-123" not in response.text
     assert "doc-rag-mock" not in response.text
+
+
+class FailingAnthropicMessages:
+    """A fake `client.messages` that fails like the SDK does when the API cannot be reached."""
+
+    def create(self, **kwargs: object) -> object:
+        request = httpx2.Request("POST", "https://api.anthropic.invalid/v1/messages")
+        raise anthropic.APIConnectionError(request=request)
+
+
+def test_anthropic_api_error_is_502(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    client = SimpleNamespace(messages=FailingAnthropicMessages())
+    services = fake_services()
+    services.generator = AnthropicApiGenerator(client, "test-model")
+    response = TestClient(create_app(services)).post("/ask", json={"question": QUESTION})
+    assert response.status_code == 502
+    assert response.json()["detail"] == UPSTREAM_ERROR
+    assert "anthropic" not in response.text
+    failed = [r for r in caplog.records if r.getMessage() == "answer failed"]
+    assert failed[0].error_type == "APIConnectionError"  # type: ignore[attr-defined]
 
 
 def test_logs_never_contain_the_question_or_error_text(caplog: pytest.LogCaptureFixture) -> None:

@@ -3,13 +3,9 @@
 from typing import Any
 
 from src.models import Chunk, SearchHit
+from src.prompting import DONT_KNOW, SYSTEM_PROMPT, cited_positions
 from src.providers.base import Generator
-from src.providers.bedrock import (
-    DONT_KNOW,
-    SYSTEM_PROMPT,
-    BedrockClaudeGenerator,
-    cited_positions,
-)
+from src.providers.bedrock import BedrockClaudeGenerator
 from src.providers.fakes import NO_ANSWER
 
 PROFILE_ID = "test-inference-profile"

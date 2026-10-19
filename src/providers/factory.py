@@ -3,7 +3,7 @@
     EMBEDDER      fake | pinecone   (default fake)
     VECTOR_STORE  memory | pinecone (default memory)
     RERANKER      none | pinecone   (default none)
-    GENERATOR     stub | bedrock    (default stub)
+    GENERATOR     stub | bedrock | anthropic (default stub)
 
 The defaults need no network and no keys. Real providers are imported only when chosen,
 and their names, indexes and keys come from their own `from_env` (never from this code).
@@ -18,7 +18,7 @@ from src.providers.fakes import FakeEmbedder, InMemoryStore, StubGenerator
 EMBEDDERS = ("fake", "pinecone")
 VECTOR_STORES = ("memory", "pinecone")
 RERANKERS = ("none", "pinecone")
-GENERATORS = ("stub", "bedrock")
+GENERATORS = ("stub", "bedrock", "anthropic")
 
 
 def _choice(variable: str, allowed: tuple[str, ...]) -> str:
@@ -81,8 +81,13 @@ def build_reranker() -> Reranker | None:
 
 
 def build_generator() -> Generator:
-    if _choice("GENERATOR", GENERATORS) == "bedrock":
+    choice = _choice("GENERATOR", GENERATORS)
+    if choice == "bedrock":
         from src.providers.bedrock import BedrockClaudeGenerator
 
         return BedrockClaudeGenerator.from_env()
+    if choice == "anthropic":
+        from src.providers.anthropic_api import AnthropicApiGenerator
+
+        return AnthropicApiGenerator.from_env()
     return StubGenerator()

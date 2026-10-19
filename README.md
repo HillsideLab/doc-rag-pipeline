@@ -31,6 +31,7 @@ A component is marked "verified" only after a real call has succeeded.
 | Docker image of the API (`python:3.12-slim`, locked runtime dependencies, non-root) | verified 2026-10-19 (built locally, 392 MB; container started with `--env-file .env` and `/health` returned the Pinecone providers; `/ask` was not sent through the container; not pushed) |
 | `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
+| `AnthropicApiGenerator` (Anthropic API, official SDK) | **not verified yet**: unit-tested with a fake client only |
 
 ## Retrieval quality
 
@@ -64,7 +65,7 @@ Providers are chosen by environment variables; the defaults need no network and 
 | `EMBEDDER` | `fake`, `pinecone` | `fake` |
 | `VECTOR_STORE` | `memory`, `pinecone` (needs `EMBEDDER=pinecone`) | `memory` |
 | `RERANKER` | `none`, `pinecone` | `none` |
-| `GENERATOR` | `stub`, `bedrock` (not verified) | `stub` |
+| `GENERATOR` | `stub`, `bedrock` (not verified), `anthropic` (not verified yet) | `stub` |
 
 ```
 export EMBEDDER=pinecone VECTOR_STORE=pinecone RERANKER=pinecone GENERATOR=stub
@@ -81,6 +82,15 @@ source. It cannot judge whether the passages actually answer the question; it re
 "I don't know based on the provided documents." when they do not contain the answer, and to
 cite passages as `[n]`. It needs `BEDROCK_INFERENCE_PROFILE_ID` (an inference profile ID, not
 a bare model ID). It has not been run against Bedrock.
+
+`AnthropicApiGenerator` sends the same prompt (`src/prompting.py`) to Claude through the
+Anthropic API with the official `anthropic` SDK. Bedrock was blocked by an account
+restriction, so the generator adapter was swapped: `GENERATOR=anthropic` is the only change,
+and the API code is the same. It needs `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` (no default
+in code; `claude-haiku-5-5` is the suggested model). The citations are not written by the
+model: they are every retrieved passage in retrieval order, so `[n]` in the answer is always
+the n-th citation. A reply cut off at the token limit, or refused, is an error (502), never a
+partial answer. The log line per call has the model name and token counts only.
 
 Result on the 5 evaluation questions (StubGenerator, Pinecone + reranking, `top_k=5`): 5/5
 answers cite at least one expected chunk; the mean share of expected chunks cited is 0.85.
@@ -105,7 +115,7 @@ Settings for the demo, in `.env` (see `.env.example`):
 | `EMBEDDER` | `pinecone` | must match the index (one index, one embedder) |
 | `VECTOR_STORE` | `pinecone` | |
 | `RERANKER` | `pinecone` | one rerank request per `/ask` (free plan: 500 per month) |
-| `GENERATOR` | `stub` | no generative model; swapped by this variable alone |
+| `GENERATOR` | `stub` | no generative model; swapped by this variable alone (`anthropic` also needs `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`) |
 | `PINECONE_NAMESPACE` | `__default__` | required, no default in code; `__default__` is the default namespace (the M3 data) |
 
 The Pinecone settings from "Index and search with Pinecone" are also needed:

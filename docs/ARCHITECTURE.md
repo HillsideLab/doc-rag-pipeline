@@ -49,15 +49,18 @@
 - `src/answering.py`: 質問応答の本体 `answer_question` (検索 → 生成 → 免責の文を付ける)。CLI、API (M5)、Lambda (M6) から同じ関数を呼ぶ。
 - `src/providers/factory.py`: 環境変数 `EMBEDDER` / `VECTOR_STORE` / `RERANKER` / `GENERATOR` から実装を選ぶ。既定はすべてフェイク。API 用に、選んだ名前だけを返す `selected()` と、`PINECONE_NAMESPACE` を読む `pinecone_namespace()` (必須、`__default__` は default namespace) も持つ。
 - `src/providers/bedrock.py`: Generator の Bedrock Claude 実装 (Converse API、推論プロファイル ID)。**未検証** (アカウントの制限で Bedrock を呼べないため、フェイクのクライアントでのみテスト)。
+- `src/prompting.py`: 生成モデルに渡すプロンプト (system の規則、番号付きの文章と質問) と、回答の `[n]` を読む関数。Bedrock と Anthropic API の Generator が共有する。
+- `src/providers/anthropic_api.py`: Generator の Anthropic API 実装 (公式 SDK `anthropic`)。Bedrock が使えないための差し替え先。キーとモデル名は環境変数で必須。
 - `scripts/ask.py`: 質問 1 つに答え、回答・出典・免責の文を表示する CLI。実装は環境変数で選ぶ。読み取りのみ。
 - `scripts/eval_answers.py`: 評価セットの 5 問に答え、出典に正解のチャンクが含まれるかを数え、使った量を表示する CLI。読み取りのみ。
 - `tests/test_answering.py`: 出典の項目、免責の文、0 件、doc_id での絞り込み、リランクの順序のテスト。
 - `tests/test_factory.py`: 既定値がフェイクであること、知らない値や禁止の組み合わせ、必須の変数がないときのテスト。本物のクライアントは作らない。
 - `tests/test_bedrock_generator.py`: Bedrock 実装のテスト。bedrock-runtime は自作のフェイクで、通信しない。
+- `tests/test_anthropic_generator.py`: Anthropic API 実装のテスト。SDK のクライアントは自作のフェイクで、通信しない。リクエストの形、出典の並び、エラーにする場合、ログに本文が出ないことを確かめる。
 - `src/pipeline/__init__.py`: `pipeline` をパッケージにする (中身は空)。
 - `src/pipeline/steps.py`: Step Functions の工程ごとの関数 (登録、Textract の開始・確認・保存、チャンク化と登録)。クライアントは引数で受け取る。再試行させる例外 `TransientError` もここで定める。
 - `src/pipeline/handlers.py`: Lambda のハンドラ 5 つ。環境変数を読み、クライアントを作り (コンテナが温かい間は再利用)、`steps.py` を呼ぶだけ。Pinecone のキーは Secrets Manager から読む。
-- `src/pipeline/logging_json.py`: Lambda と API のログを 1 行 1 JSON にする。Lambda は `document_id`、`execution_arn`、`step`、`status`、API は `request_id`、`method`、`path`、`status_code`、`duration_ms` と起動時の provider 名を付ける。質問文、本文、キーは出さない。
+- `src/pipeline/logging_json.py`: Lambda と API のログを 1 行 1 JSON にする。Lambda は `document_id`、`execution_arn`、`step`、`status`、API は `request_id`、`method`、`path`、`status_code`、`duration_ms` と起動時の provider 名、Anthropic API の生成はモデル名とトークン数を付ける。質問文、本文、キーは出さない。
 - `scripts/build_lambda.sh`: Lambda 用の zip (`build/lambda.zip`) を作る。`src/` と、Linux x86_64 / Python 3.12 用の依存関係。boto3 と numpy は入れない。
 - `scripts/cleanup.sh`: M6 で作ったものを片付ける (Pinecone の `pipeline` namespace、`incoming/` のファイル、`terraform destroy`)。段階ごとに確認を取る。最後に、deployer ポリシーを root で外す手作業の手順を表示する。
 - `infra/versions.tf`: Terraform と AWS provider のバージョン、ローカル state、全リソースのタグ `Project=doc-rag-mock`。リージョンと認証情報は環境変数から読む。
@@ -164,7 +167,7 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 3. 限界: 内容が質問に合うかは判断できない。「見つからない」と答えるのは検索結果が 0 件のときだけ。
 
 ### 実装の切り替え
-1. `EMBEDDER` (fake|pinecone)、`VECTOR_STORE` (memory|pinecone)、`RERANKER` (none|pinecone)、`GENERATOR` (stub|bedrock)。未設定なら最初の値 (フェイク) で、ネットワークもキーも使わない。知らない値はエラーで止める。
+1. `EMBEDDER` (fake|pinecone)、`VECTOR_STORE` (memory|pinecone)、`RERANKER` (none|pinecone)、`GENERATOR` (stub|bedrock|anthropic)。未設定なら最初の値 (フェイク) で、ネットワークもキーも使わない。知らない値はエラーで止める。
 2. 本物の実装は選ばれたときだけ import し、インデックス名やキーはそれぞれの `from_env` が環境変数から読む。コードには外部の名前もキーも書かない。
 3. `VECTOR_STORE=pinecone` のときは `EMBEDDER=pinecone` が必須。インデックスは Pinecone の埋め込みで作ったので、別の埋め込みで検索すると結果が意味をなさない (1 つのインデックスに 1 つの埋め込みモデル)。
 4. M3 のスクリプト (`index_documents`、`search`、`eval_retrieval`) は Pinecone 専用のまま残し、切り替えは使わない。
@@ -174,6 +177,21 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 2. system プロンプトの規則: 渡した番号付きの文章だけを根拠にする / 根拠がなければ決まった文 `I don't know based on the provided documents.` で答える / 文ごとに `[n]` で出典を示す。
 3. 回答の `[n]` から出典を決める (範囲外の番号は無視)。番号が 1 つもなければ渡した全チャンクを出典にする (出典を必ず付けるため)。「わからない」の回答は出典なし。検索結果が 0 件ならモデルを呼ばない。
 4. 本物では一度も呼んでいない。README でも verified にしない。
+5. プロンプトは `src/prompting.py` に移し、Anthropic API の Generator と共有する。規則に「医療の助言をしない」を加えた。
+
+### Anthropic API の生成 (Bedrock の代わり)
+1. Bedrock がアカウントの制限で使えないので、Generator を 1 つ差し替えた。`GENERATOR=anthropic` にするだけで、API のコードは変えていない (factory に分岐を 1 つ足しただけ)。Bedrock の実装は消さずに残す。
+2. プロンプトは Bedrock と同じ (`src/prompting.py`)。運び方 (SDK) だけが違う。
+3. 出典はモデルに作らせない。渡したチャンクをすべて、検索の順のまま出典にする。そのため回答の `[n]` は必ず出典の n 番目を指す。「わからない」の回答でも、何を検索したかを示すために出典を残す。Bedrock 版は引用された番号だけに絞るので、番号と出典の並びがずれることがある (対象外なので変えていない)。
+4. 設定: `ANTHROPIC_API_KEY` と `ANTHROPIC_MODEL` は必須で、コードに既定値を置かない。キーは SDK に明示して渡し、ほかの認証情報に切り替わらないようにする。`max_tokens` (2048)、タイムアウト (30 秒)、再試行 (1 回)、effort (`low`) は環境変数にせず、理由のコメント付きの定数にした。「環境変数で読む設定には既定値を置かない」方針と矛盾させないため。
+5. `max_tokens` は 2048。thinking のトークンもこの上限に数えられるので、1024 では足りなくなりうる。回答そのものは数百トークン。
+6. `temperature` は送らない。現在のモデル (Haiku 5.5、Sonnet 5.5) は既定以外の値を 400 で拒否する。Bedrock 版 (`temperature=0`) との違い。
+7. 応答には thinking のブロックが入りうるので、text のブロックだけを回答にする。上限で途中で切れた回答 (`max_tokens`)、拒否 (`refusal`)、空の回答は `GenerationError` にして 502 で返す。途中で切れた回答を正しい回答として見せないため。
+8. エラー: SDK の例外 (認証、残高不足、レート制限、タイムアウト、接続) は API の既存の `except Exception` に乗り、決まった文の 502 になる。ログにはクラス名 (`RateLimitError` など) だけを出す。
+9. 再試行は 1 回 (SDK の既定は 2 回)。SDK が再試行するのは 408/409/429/5xx と接続エラーだけで、認証や残高不足は再試行しない。失敗したリクエストは課金されない。タイムアウト 30 秒と合わせて、Swagger での最悪の待ちは約 60 秒。
+10. ログ: 呼び出しごとに 1 行 (`generation`)。モデル名、入力と出力のトークン数、`stop_reason`、引用した文章の数、所要時間だけ。質問文、チャンクの本文、回答、キーは出さない。SDK と `httpx2` のログは WARNING 以上に絞る。
+11. モデルの選び方: 1 回の `/ask` は入力約 3,000、出力約 500 トークン。Haiku 5.5 で約 0.0006 USD、Sonnet 5.5 で約 0.011 USD。抜き出し型の質問なので、開発でもデモでも最も安い `claude-haiku-5-5` を使う。答えが弱ければ `ANTHROPIC_MODEL` だけで Sonnet に替えられる。
+12. `anthropic` を依存に加えたので、Lambda の zip も数 MB 増える (Lambda はこの SDK を使わない)。依存のグループを分けるより単純さを取った。
 
 ### 回答の評価 (StubGenerator、本物の Pinecone + リランク、top_k=5)
 `scripts/eval_answers.py` で、評価セットの 5 問に答えた。出典に正解のチャンクが 1 つでも入った質問は 5/5、正解のうち出典に入った割合の平均は 0.85。Stub は上位 5 件をすべて出典にするので、M3 のリランクありの hit@5 (5/5、0.85) と一致する。1 回の実行で、埋め込み 66 トークン、リランク 5 リクエスト。

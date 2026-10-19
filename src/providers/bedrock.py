@@ -7,43 +7,12 @@ The boto3 client is passed in, so tests use a small fake and never touch the net
 """
 
 import os
-import re
 from typing import Any
 
-from src.citations import citation_for, source_label
+from src.citations import citation_for
 from src.models import Answer, SearchHit
+from src.prompting import DONT_KNOW, SYSTEM_PROMPT, build_prompt, cited_positions
 from src.providers.fakes import NO_ANSWER
-
-DONT_KNOW = "I don't know based on the provided documents."
-
-SYSTEM_PROMPT = f"""You answer questions about medicines using only the numbered passages \
-from public product information documents that are given to you.
-Rules:
-1. Use only the given passages as evidence. Do not use outside knowledge.
-2. If the passages do not contain the answer, reply exactly: {DONT_KNOW}
-3. Cite every statement with the passage number in square brackets, for example [1] or [2][3].
-Keep the answer short and factual."""
-
-CITATION_MARK = re.compile(r"\[(\d+)\]")
-
-
-def build_prompt(question: str, hits: list[SearchHit]) -> str:
-    """User message: numbered passages with their source, then the question."""
-    passages = "\n\n".join(
-        f"[{n}] {source_label(hit.chunk)}\n{hit.chunk.text}" for n, hit in enumerate(hits, 1)
-    )
-    return f"Passages:\n\n{passages}\n\nQuestion: {question}"
-
-
-def cited_positions(text: str, count: int) -> list[int]:
-    """0-based positions of the passages cited as [n] in `text`, in first-cited order.
-    Numbers outside 1..count are ignored."""
-    positions: list[int] = []
-    for mark in CITATION_MARK.findall(text):
-        position = int(mark) - 1
-        if 0 <= position < count and position not in positions:
-            positions.append(position)
-    return positions
 
 
 class BedrockClaudeGenerator:
