@@ -13,6 +13,12 @@ Status: milestones M0 to M6 are done, including M5 (local HTTP API and Docker im
 this documentation pass. Bedrock is still blocked by an AWS account restriction, so answers are
 generated through the Anthropic API instead. See "Known limitations" for what is missing.
 
+![POST /ask in the Swagger UI: an answer with [n] citation marks and the list of citations](docs/images/ask-demo.png)
+
+Asking a question from the Swagger UI (`/docs`) returns an answer with numbered citation
+marks and the list of cited passages. Checked on 2026-10-19 against the real Pinecone index
+and the Anthropic API.
+
 ## Verified components
 
 A component is marked "verified" only after a real call has succeeded.

@@ -84,6 +84,7 @@
 - `src/api/__main__.py`: `python -m src.api` で API を起動する。認証がないので `127.0.0.1` だけで待ち受ける。
 - `scripts/export_openapi.py`: OpenAPI の定義を `docs/openapi.json` に書き出す。`--check` で、コミット済みのものとコードが一致するかを確かめる (CI で使う)。
 - `docs/openapi.json`: コードから生成した OpenAPI の定義。手で編集しない。
+- `docs/images/ask-demo.png`: README に貼るデモの画面 (Swagger UI から `/ask` を送り、出典番号つきの回答と出典の一覧が返ったところ)。キーやアカウント ID が写っていないことを確認済み。
 - `Dockerfile`: API のイメージ (手元で動かすだけで、レジストリには push しない)。`python:3.12-slim` に版を固定した uv を入れ、`uv.lock` どおりに本番用の依存だけを入れる。root ではないユーザーで動かす。
 - `.dockerignore`: ビルドに送るファイルを許可リストで決める (`pyproject.toml`、`uv.lock`、`.python-version`、`src/` だけ)。`.env` はイメージに入らない。
 - `tests/test_api.py`: API のテスト (TestClient とフェイクのみ)。正常系、入力の検証 (422)、外部エラー (502 で内部情報を出さない)、ログに質問文が出ないこと、起動ログ、`/health`、`docs/openapi.json` との一致。
