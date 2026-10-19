@@ -23,9 +23,9 @@ A component is marked "verified" only after a real call has succeeded.
 | Pinecone reranking (`bge-reranker-v2-m3`, top 50 vector hits) | verified 2026-10-19 (5 requests) |
 | Answering with `StubGenerator` (no generative model) over Pinecone retrieval + reranking | verified 2026-10-19 (5 evaluation questions) |
 | Event-driven pipeline, cache-hit path: S3 `incoming/` -> EventBridge -> Step Functions -> Lambda (Register -> Index) -> DynamoDB `INDEXED`, Pinecone namespace `pipeline` | verified 2026-10-19 (Cablivi, 39 pages, 138 chunks, same count as the M3 index; Textract skipped by the cache) |
-| Failure path for a non-retryable error: Catch -> `MarkFailed` (DynamoDB `FAILED` + error), no retry | verified 2026-10-19 (first run failed on a missing Lambda setting, `PINECONE_EMBED_MODEL`) |
-| Pipeline cache-miss path (StartExtraction -> Wait/Check -> SaveExtraction) | **not verified yet** |
-| Retries of transient errors (3 attempts in total, then `FAILED`) | **not verified yet** |
+| Failure path for a non-retryable error: Catch -> `MarkFailed` (DynamoDB `FAILED` + error), no retry | verified 2026-10-19 (first run failed on a missing Lambda setting, `PINECONE_EMBED_MODEL`; a text file uploaded as `incoming/x.pdf` failed once in CheckExtraction with `TextractJobError` (`INVALID_IMAGE_TYPE`) and was not retried) |
+| Pipeline cache-miss path: StartExtraction -> Wait -> CheckExtraction -> SaveExtraction (writes the Textract cache) -> Index | verified 2026-10-19 (Cablivi medicine overview, 3 pages, 12 chunks; Textract finished within the first 10 s wait, so the IN_PROGRESS loop back to Wait has not run for real; the cache write did not start another execution) |
+| Retries of transient errors (3 attempts in total, then `FAILED`) | verified 2026-10-19 (forced with `force_fail_step = "index"`: IndexDocument ran 3 times, with waits of 2 s and 4 s, then MarkFailed set `FAILED` / `TransientError`; Pinecone was not touched) |
 | Bedrock | blocked by an AWS account restriction |
 
 ## Retrieval quality
@@ -94,6 +94,8 @@ default namespace is left untouched. Full run steps, cost notes and cleanup come
 Measured on the first successful run (Cablivi, cache hit, cold start): the whole execution
 took 8 s. Lambda RegisterDocument ran for 1.9 s with 116 of 256 MB used. Lambda
 IndexDocument (138 chunks) ran for 3.9 s with 158 of 1024 MB used, and its timeout is 300 s.
+On the cache-miss run (3 pages), the whole execution took 27 s. StartExtraction and
+CheckExtraction each used 104 of 128 MB, and SaveExtraction used 116 of 1024 MB.
 
 ## Documents
 

@@ -165,7 +165,7 @@
       "Parameters": {
         "TableName": "${table_name}",
         "Key": { "doc_id": { "S.$": "$.doc.doc_id" } },
-        "UpdateExpression": "SET #status = :status, #error = :error, cause = :cause, updated_at = :now",
+        "UpdateExpression": "SET #status = :status, #error = :error, cause = :cause, updated_at = :now REMOVE page_count, chunk_count",
         "ExpressionAttributeNames": { "#status": "status", "#error": "error" },
         "ExpressionAttributeValues": {
           ":status": { "S": "FAILED" },

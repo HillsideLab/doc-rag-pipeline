@@ -4,10 +4,12 @@
 locals {
   lambda_zip = "${path.module}/../build/lambda.zip"
 
+  # Memory in MB, timeout in seconds. Nothing runs below 256 MB: at 128 MB, start-extraction
+  # and check-extraction used 104 MB (mostly boto3), too close to the limit.
   functions = {
     register         = { handler = "register", memory = 256, timeout = 60 }
-    start-extraction = { handler = "start_extraction", memory = 128, timeout = 30 }
-    check-extraction = { handler = "check_extraction", memory = 128, timeout = 30 }
+    start-extraction = { handler = "start_extraction", memory = 256, timeout = 30 }
+    check-extraction = { handler = "check_extraction", memory = 256, timeout = 30 }
     save-extraction  = { handler = "save_extraction", memory = 1024, timeout = 180 }
     index-document   = { handler = "index", memory = 1024, timeout = 300 }
   }

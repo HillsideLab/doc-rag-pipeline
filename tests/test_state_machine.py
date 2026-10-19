@@ -64,6 +64,9 @@ def test_mark_failed_records_failed_status_and_error(states) -> None:
     values = states["MarkFailed"]["Parameters"]["ExpressionAttributeValues"]
     assert values[":status"] == {"S": "FAILED"}
     assert values[":error"] == {"S.$": "$.error.Error"}
+    # Counts from an earlier INDEXED run must not look like this run's result.
+    expression = states["MarkFailed"]["Parameters"]["UpdateExpression"]
+    assert "REMOVE page_count, chunk_count" in expression
 
 
 def test_cache_hit_skips_textract(states) -> None:
