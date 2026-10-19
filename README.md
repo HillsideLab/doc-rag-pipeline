@@ -276,8 +276,46 @@ PDF -> s3://$S3_BUCKET/incoming/
        SaveExtraction     merged Textract JSON -> textract-cache/
        IndexDocument      chunk -> embed -> Pinecone namespace "pipeline"
        MarkIndexed        DynamoDB status INDEXED, page_count, chunk_count
-       any failure        -> MarkFailed: DynamoDB status FAILED, error, cause
+       any later failure  -> MarkFailed: DynamoDB status FAILED, error, cause
+       RegisterDocument failure -> the execution fails; nothing is written to DynamoDB
 ```
+
+```mermaid
+flowchart TD
+    S3["S3 incoming/<br/>Object Created"] --> EB["EventBridge rule<br/>starts the state machine"]
+    EB --> Reg["RegisterDocument<br/>sha256, DynamoDB RECEIVED"]
+    Reg --> Cache{"CacheHit?<br/>Textract result in textract-cache/"}
+    Cache -- "yes" --> Index
+    Cache -- "no" --> Start["StartExtraction"]
+    Start --> Wait["WaitForTextract<br/>10 s"]
+    Wait --> Check["CheckExtraction"]
+    Check --> Done{"JobDone?"}
+    Done -- "IN_PROGRESS" --> Wait
+    Done -- "SUCCEEDED" --> Save["SaveExtraction<br/>writes textract-cache/"]
+    Save --> Index["IndexDocument<br/>chunk, embed, Pinecone upsert"]
+    Index --> Marked["MarkIndexed<br/>DynamoDB INDEXED"]
+    Marked --> OK(["Indexed"])
+
+    Start -. error .-> MF
+    Check -. error .-> MF
+    Save -. error .-> MF
+    Index -. error .-> MF
+    Marked -. error .-> MF
+    MF["MarkFailed<br/>DynamoDB FAILED, error, cause"] --> Fail(["Failed"])
+    Reg -. error .-> RF(["RegisterFailed<br/>no doc_id, nothing in DynamoDB"])
+```
+
+Dotted lines are failures. Which failures are retried:
+
+- **Retried** (the five Lambda steps: RegisterDocument, StartExtraction, CheckExtraction,
+  SaveExtraction, IndexDocument): Lambda service errors, Lambda throttling, and
+  `TransientError`. 3 attempts in total, waiting 2 s and then 4 s. If the third attempt also
+  fails, the error takes the dotted line.
+- **Not retried**: every other error, for example a failed Textract job, a Textract job still
+  running after 600 s (raised by CheckExtraction), or a missing setting. It takes the dotted
+  line at once.
+- MarkIndexed and MarkFailed update DynamoDB directly from Step Functions (no Lambda) and are
+  not retried. A failure in MarkFailed itself ends the execution without a DynamoDB update.
 
 States, retries and failure handling are in `infra/statemachine.asl.json`. The pipeline's AWS
 resources are in `infra/` (Terraform, local state); the S3 bucket already existed and only its
