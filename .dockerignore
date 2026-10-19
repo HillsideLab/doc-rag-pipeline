@@ -1,0 +1,8 @@
+# Allow-list: send only what the image needs to the Docker build context.
+# Everything else stays out, including .env, .venv, data/, PDFs, infra/ and .git.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!src/
+**/__pycache__

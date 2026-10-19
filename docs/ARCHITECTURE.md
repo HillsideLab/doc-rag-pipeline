@@ -81,6 +81,8 @@
 - `src/api/__main__.py`: `python -m src.api` で API を起動する。認証がないので `127.0.0.1` だけで待ち受ける。
 - `scripts/export_openapi.py`: OpenAPI の定義を `docs/openapi.json` に書き出す。`--check` で、コミット済みのものとコードが一致するかを確かめる (CI で使う)。
 - `docs/openapi.json`: コードから生成した OpenAPI の定義。手で編集しない。
+- `Dockerfile`: API のイメージ (手元で動かすだけで、レジストリには push しない)。`python:3.12-slim` に版を固定した uv を入れ、`uv.lock` どおりに本番用の依存だけを入れる。root ではないユーザーで動かす。
+- `.dockerignore`: ビルドに送るファイルを許可リストで決める (`pyproject.toml`、`uv.lock`、`.python-version`、`src/` だけ)。`.env` はイメージに入らない。
 - `tests/test_api.py`: API のテスト (TestClient とフェイクのみ)。正常系、入力の検証 (422)、外部エラー (502 で内部情報を出さない)、ログに質問文が出ないこと、起動ログ、`/health`、`docs/openapi.json` との一致。
 
 ## 設計メモ
@@ -200,3 +202,4 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 21. 外部サービスのエラーは 502 にし、決まった文と `request_id` だけを返す。SDK の例外の文にはインデックス名やリクエストの中身が入ることがあるので、ログにもクラス名だけを出す。`/health` は外部サービスを呼ばない (リランクの無料枠と費用を使わないため)。
 22. Pinecone の namespace は `PINECONE_NAMESPACE` で決める (必須)。default namespace は空文字だと「未設定」と区別できないので、Pinecone のコンソールの表記に合わせて `__default__` と書く。
 23. 本物で確認したこと (2026-10-19): Swagger UI から `/ask` を 1 回 (200、3.9 秒、出典に Cablivi の 6.1 List of excipients の 10 ページと 11 ページ)。ログに質問文は出ていない。上位 3 件はラベル表示の「3. LIST OF EXCIPIENTS」のほぼ同じ文で、重複の除去はまだしていない。
+24. Docker のコンテナ内では `0.0.0.0` で待ち受ける (ポートの公開に必要)。ホスト側は `-p 127.0.0.1:8000:8000` で loopback だけに公開する。設定は実行時の `--env-file` で渡し、イメージには入れない。確認済み (2026-10-19): ビルド (392 MB) と、コンテナでの起動と `/health`。コンテナ経由の `/ask` は送っていない。コンテナでは起動に 20〜40 秒かかった (import は 1.6 秒なので、Pinecone のクライアントを作る部分。原因は未調査)。

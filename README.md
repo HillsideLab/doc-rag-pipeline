@@ -28,6 +28,7 @@ A component is marked "verified" only after a real call has succeeded.
 | Retries of transient errors (3 attempts in total, then `FAILED`) | verified 2026-10-19 (forced with `force_fail_step = "index"`: IndexDocument ran 3 times, with waits of 2 s and 4 s, then MarkFailed set `FAILED` / `TransientError`; Pinecone was not touched) |
 | Lambda logs as JSON (`log_format = "JSON"`): every line in the log group is JSON; `step`, `status`, `document_id` and `execution_arn` are top-level fields | verified 2026-10-19 (read with `aws logs filter-log-events`; CloudWatch Logs Insights queries were not tried) |
 | HTTP API on 127.0.0.1 (FastAPI): `POST /ask` from the Swagger UI, `StubGenerator` over Pinecone retrieval + reranking; `GET /health` | verified 2026-10-19 (1 `/ask` request: 200 in 3.9 s; the citations included Cablivi 6.1 List of excipients, pages 10 and 11; the log line had no question text) |
+| Docker image of the API (`python:3.12-slim`, locked runtime dependencies, non-root) | verified 2026-10-19 (built locally, 392 MB; container started with `--env-file .env` and `/health` returned the Pinecone providers; `/ask` was not sent through the container; not pushed) |
 | `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
 
@@ -144,6 +145,24 @@ to date. After changing the API or upgrading FastAPI or Pydantic, regenerate it:
 uv run python -m scripts.export_openapi           # write docs/openapi.json
 uv run python -m scripts.export_openapi --check   # what CI runs
 ```
+
+Docker (local only; the image is never pushed to a registry):
+
+```
+docker build -t doc-rag-api .
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env doc-rag-api
+```
+
+Inside the container the server listens on `0.0.0.0`, which port publishing needs.
+`-p 127.0.0.1:8000:8000` publishes it on the host's loopback only. `.dockerignore` is an
+allow-list (`pyproject.toml`, `uv.lock`, `.python-version`, `src/`), so `.env` is never copied
+into the image. Settings come from `--env-file` at run time, so the Pinecone key is in the
+container's environment while it runs. This is fine for a local demo only. Docker's
+`--env-file` does not remove quotes, so write values in `.env` without quotes. The image
+installs only the locked runtime dependencies (no dev tools) and runs as a non-root user.
+Startup took 20 to 40 seconds in the container (a few seconds outside Docker). Python imports
+take 1.6 s, so most of the time is spent building the Pinecone clients. The cause has not
+been investigated.
 
 ## Event-driven pipeline on AWS (M6)
 
