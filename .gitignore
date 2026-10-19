@@ -3,6 +3,7 @@
 *.pdf
 out.json
 *.tfstate*
+*.tfplan
 .terraform/
 __pycache__/
 .DS_Store

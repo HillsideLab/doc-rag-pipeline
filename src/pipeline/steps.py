@@ -27,7 +27,9 @@ class TransientError(RuntimeError):
 
 
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    """UTC time in the format Step Functions writes ($$.State.EnteredTime), e.g.
+    2026-10-19T04:55:34.746Z, so every updated_at in the table looks the same."""
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def register(

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -115,3 +116,8 @@ def test_index_without_cache_fails_and_writes_nothing() -> None:
         steps.index(extractor(FakeS3()), embedder, store, KEY, SHA256)
 
     assert store.query(embedder.embed_query("dose"), top_k=10) == []
+
+
+def test_timestamps_match_the_step_functions_format() -> None:
+    # MarkIndexed / MarkFailed write $$.State.EnteredTime, e.g. 2026-10-19T04:55:34.746Z.
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", steps.utc_now())

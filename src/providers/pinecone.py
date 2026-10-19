@@ -18,7 +18,8 @@ from src.providers.base import EMBEDDING_DIM
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EMBED_MODEL = "llama-text-embed-v2"
+# The embedding model has no default in code: one index uses one model, so the model name
+# must come from PINECONE_EMBED_MODEL, like the index name (the index uses llama-text-embed-v2).
 # Limits reported by the API for llama-text-embed-v2 (inference.get_model): 96 inputs per
 # request, 2048 tokens per input. Upserts allow 1000 records / 2 MB; one chunk is ~15 KB.
 EMBED_BATCH_SIZE = 96
@@ -51,7 +52,7 @@ class PineconeInferenceEmbedder:
     def __init__(
         self,
         inference: Any,
-        model: str = DEFAULT_EMBED_MODEL,
+        model: str,
         dimension: int = EMBEDDING_DIM,
         batch_size: int = EMBED_BATCH_SIZE,
     ) -> None:
@@ -63,7 +64,7 @@ class PineconeInferenceEmbedder:
 
     @classmethod
     def from_env(cls) -> "PineconeInferenceEmbedder":
-        model = os.environ.get("PINECONE_EMBED_MODEL") or DEFAULT_EMBED_MODEL
+        model = _require_env("PINECONE_EMBED_MODEL")  # checked before any client is created
         return cls(_client_from_env().inference, model=model)
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:

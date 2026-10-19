@@ -30,4 +30,4 @@ find "$BUILD" -name __pycache__ -type d -prune -exec rm -rf {} +
 find "$BUILD" -exec touch -t 198001010000 {} +
 (cd "$BUILD" && find . -type f | LC_ALL=C sort | zip -q -X "../lambda.zip" -@)
 
-echo "built $ZIP ($(du -h "$ZIP" | cut -f1))"
+echo "built $ZIP ($(wc -c < "$ZIP" | tr -d ' ') bytes)"

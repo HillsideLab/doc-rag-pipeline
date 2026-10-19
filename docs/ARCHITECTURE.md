@@ -10,7 +10,7 @@
 - `pyproject.toml`: uv のプロジェクト定義。依存関係と ruff / pytest の設定をまとめる。
 - `uv.lock`: 依存バージョンの固定。CI でも同じバージョンを使うためにコミットする。
 - `.python-version`: uv が使う Python のバージョン (3.12)。
-- `.gitignore`: `.env`、仮想環境、PDF、Terraform state などをコミット対象から外す。
+- `.gitignore`: `.env`、仮想環境、PDF、Terraform の state と plan ファイル、Lambda のビルド結果 (`build/`) などをコミット対象から外す。
 - `.env.example`: 環境変数の雛形。値は空かダミーのみで、実際の値は git 管理外の `.env` に書く。
 - `.github/workflows/ci.yml`: GitHub Actions。AWS 認証情報なしで ruff と pytest、Lambda の zip の作成と `terraform fmt -check` / `validate` を実行する。
 - `src/__init__.py`: `src` をパッケージとして import できるようにする (中身は空)。
@@ -59,6 +59,7 @@
 - `src/pipeline/handlers.py`: Lambda のハンドラ 5 つ。環境変数を読み、クライアントを作り (コンテナが温かい間は再利用)、`steps.py` を呼ぶだけ。Pinecone のキーは Secrets Manager から読む。
 - `src/pipeline/logging_json.py`: Lambda のログを 1 行 1 JSON にする。`document_id`、`execution_arn`、`step`、`status` を必ず付け、本文やキーは出さない。
 - `scripts/build_lambda.sh`: Lambda 用の zip (`build/lambda.zip`) を作る。`src/` と、Linux x86_64 / Python 3.12 用の依存関係。boto3 と numpy は入れない。
+- `scripts/cleanup.sh`: M6 で作ったものを片付ける (Pinecone の `pipeline` namespace、`incoming/` のファイル、`terraform destroy`)。段階ごとに確認を取る。最後に、deployer ポリシーを root で外す手作業の手順を表示する。
 - `infra/versions.tf`: Terraform と AWS provider のバージョン、ローカル state、全リソースのタグ `Project=doc-rag-mock`。リージョンと認証情報は環境変数から読む。
 - `infra/variables.tf`: Terraform の変数 (バケット名、Pinecone のインデックス・namespace・モデル、テスト用の `force_fail_step`)。`force_fail_step` 以外は既定値なし。
 - `infra/dynamodb.tf`: 文書の処理状態のテーブル (`doc_id` のみのキー、オンデマンド)。
@@ -180,3 +181,9 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 9. Lambda は 1 つの zip を 5 関数で共有する (handler 名だけが違う)。Python 3.12、x86_64、VPC なし。boto3 はランタイムに入っているものを使う。
 10. Pinecone の API キーは Secrets Manager から、コンテナごとに 1 回だけ読む。Terraform が作るのは入れ物だけなので、キーは tfvars にも state にも入らない。
 11. テスト用に、環境変数 `FORCE_FAIL_STEP` で指定した工程が `TransientError` を出す。再試行と FAILED の経路を本物で確かめるため。普段は空。
+12. 設定の値はコードに既定値を置かない。Pinecone の埋め込みモデル名 (`PINECONE_EMBED_MODEL`) も必須にした。最初の本番実行で、`.env` にこの変数がなく、Lambda の環境変数が空のまま作られて失敗したため (CLI はコード内の既定値で動いていたので気づかなかった)。Terraform の必須の変数にも、空の値を plan で止める検証を入れた。
+13. メモリは実測で決めた。128 MB の関数は boto3 だけで 104 MB を使ったので、すべて 256 MB 以上にした。IndexDocument は 1024 MB で 158 MB しか使わないが、メモリを増やすと CPU も増えるので、大きな文書のために余裕を残している。
+14. `updated_at` は、Lambda が書く値も Step Functions (`$$.State.EnteredTime`) と同じ形 (`2026-10-19T04:55:34.746Z`、ミリ秒、末尾 `Z`) にそろえた。
+15. MarkFailed は前回の `page_count` / `chunk_count` を消す。INDEXED の後に FAILED になった項目で、古い件数が今回の結果に見えないようにするため。
+16. Lambda のログ形式は JSON (`logging_config`)。本番で確認済み (2026-10-19): ロググループの全行が JSON で、START / REPORT も `platform.start` / `platform.report` の JSON になる (メモリは `record.metrics.maxMemoryUsedMB`)。ハンドラの行は `logging_json.py` の形のままで、`step` / `status` / `document_id` / `execution_arn` が `message` の中の文字列ではなく最上位の項目として入る。自前の行には時刻と requestId がない (時刻は CloudWatch の `@timestamp` で並べる)。`status` は工程の状態 (STARTED / SUCCEEDED / FAILED) で、文書の `INDEXED` は DynamoDB にだけある (MarkIndexed は Lambda を通らない)。Logs Insights でのクエリは、権限を付けていないため試していない。
+17. 本番で確かめたこと: キャッシュあり / なしの経路、一時的なエラーの再試行 (計 3 回、待ち 2 秒・4 秒)、再試行しない失敗 (設定の不足、Textract の `INVALID_IMAGE_TYPE`)。Wait に戻るループ (IN_PROGRESS) は、Textract が最初の 10 秒で終わったため本番では通っていない。

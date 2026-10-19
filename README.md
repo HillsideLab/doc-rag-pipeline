@@ -26,6 +26,8 @@ A component is marked "verified" only after a real call has succeeded.
 | Failure path for a non-retryable error: Catch -> `MarkFailed` (DynamoDB `FAILED` + error), no retry | verified 2026-10-19 (first run failed on a missing Lambda setting, `PINECONE_EMBED_MODEL`; a text file uploaded as `incoming/x.pdf` failed once in CheckExtraction with `TextractJobError` (`INVALID_IMAGE_TYPE`) and was not retried) |
 | Pipeline cache-miss path: StartExtraction -> Wait -> CheckExtraction -> SaveExtraction (writes the Textract cache) -> Index | verified 2026-10-19 (Cablivi medicine overview, 3 pages, 12 chunks; Textract finished within the first 10 s wait, so the IN_PROGRESS loop back to Wait has not run for real; the cache write did not start another execution) |
 | Retries of transient errors (3 attempts in total, then `FAILED`) | verified 2026-10-19 (forced with `force_fail_step = "index"`: IndexDocument ran 3 times, with waits of 2 s and 4 s, then MarkFailed set `FAILED` / `TransientError`; Pinecone was not touched) |
+| Lambda logs as JSON (`log_format = "JSON"`): every line in the log group is JSON; `step`, `status`, `document_id` and `execution_arn` are top-level fields | verified 2026-10-19 (read with `aws logs filter-log-events`; CloudWatch Logs Insights queries were not tried) |
+| `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
 
 ## Retrieval quality
@@ -83,19 +85,114 @@ answers cite at least one expected chunk; the mean share of expected chunks cite
 This matches retrieval hit@5 with reranking, because the stub cites every retrieved chunk.
 One run used 66 embedding tokens and 5 rerank requests.
 
-## Event-driven pipeline (M6, in progress)
+## Event-driven pipeline on AWS (M6)
 
-Uploading a PDF to `s3://$S3_BUCKET/incoming/` starts a Step Functions workflow. Its states,
-retries and failure handling are in `infra/statemachine.asl.json`, and the infrastructure is
-in `infra/` (Terraform, local state). Status is kept in the DynamoDB table
-`doc-rag-mock-documents`. Chunks go to the Pinecone namespace `pipeline`, so the M3 data in the
-default namespace is left untouched. Full run steps, cost notes and cleanup come with M7.
+```
+PDF -> s3://$S3_BUCKET/incoming/
+  -> EventBridge rule (Object Created, this bucket, prefix incoming/)
+  -> Step Functions (Standard)
+       RegisterDocument   sha256 of the PDF, DynamoDB status RECEIVED
+       CacheHit?          textract-cache/<sha256>.json exists -> skip Textract
+       StartExtraction -> Wait 10 s -> CheckExtraction -> (IN_PROGRESS: back to Wait)
+       SaveExtraction     merged Textract JSON -> textract-cache/
+       IndexDocument      chunk -> embed -> Pinecone namespace "pipeline"
+       MarkIndexed        DynamoDB status INDEXED, page_count, chunk_count
+       any failure        -> MarkFailed: DynamoDB status FAILED, error, cause
+```
 
-Measured on the first successful run (Cablivi, cache hit, cold start): the whole execution
-took 8 s. Lambda RegisterDocument ran for 1.9 s with 116 of 256 MB used. Lambda
-IndexDocument (138 chunks) ran for 3.9 s with 158 of 1024 MB used, and its timeout is 300 s.
-On the cache-miss run (3 pages), the whole execution took 27 s. StartExtraction and
-CheckExtraction each used 104 of 128 MB, and SaveExtraction used 116 of 1024 MB.
+States, retries and failure handling are in `infra/statemachine.asl.json`. All the AWS
+resources are in `infra/` (Terraform, local state). Transient errors are retried (3 attempts
+in total, waiting 2 s and then 4 s). Other errors, such as a failed Textract job, go to
+`FAILED` without a retry. Only IDs and counts pass between states (the limit is 256 KB). The
+Textract result itself goes through the S3 cache. The pipeline writes to the Pinecone namespace
+`pipeline`, so the M3 data in the default namespace is left untouched. The Lambda functions run
+Python 3.12 without a VPC. All five share one zip, and each step has its own least-privilege
+role. The Pinecone API key is read from Secrets Manager. Terraform creates only the empty
+secret, so the key is never in tfvars, in the Terraform state, or in git.
+
+### Deploy
+
+Needs Terraform >= 1.16 and an AWS user that is allowed to manage `doc-rag-mock-*` resources.
+`infra/deployer-policy.json` is the policy used here. It is too long for an inline user policy
+(the limit is 2,048 characters), so attach it as a customer managed policy.
+
+```
+# 1. The bucket's notification configuration must be empty: Terraform replaces all of it.
+uv run --env-file .env -- bash -c 'aws s3api get-bucket-notification-configuration --bucket "$S3_BUCKET"'
+
+# 2. Build the Lambda zip (build/lambda.zip) and plan. Values come from .env; none has a default.
+scripts/build_lambda.sh
+uv run --env-file .env -- bash -c 'TF_VAR_bucket_name="$S3_BUCKET" TF_VAR_pinecone_index="$PINECONE_INDEX" \
+  TF_VAR_pinecone_embed_model="$PINECONE_EMBED_MODEL" TF_VAR_pinecone_namespace=pipeline \
+  terraform -chdir=infra plan -out=m6.tfplan'
+terraform -chdir=infra apply m6.tfplan
+
+# 3. Put the Pinecone key into the secret (typed, not echoed, not kept in shell history).
+read -s PINECONE_KEY && aws secretsmanager put-secret-value \
+  --secret-id doc-rag-mock/pinecone-api-key --secret-string "$PINECONE_KEY"; unset PINECONE_KEY
+```
+
+### Run
+
+```
+uv run --env-file .env -- bash -c 'aws s3 cp data/pdfs/<file>.pdf "s3://$S3_BUCKET/incoming/"'
+aws dynamodb scan --table-name doc-rag-mock-documents \
+  --projection-expression "doc_id, #s, chunk_count, #e" \
+  --expression-attribute-names '{"#s":"status","#e":"error"}'
+```
+
+To test retries and `FAILED`, add `TF_VAR_force_fail_step=index` to the plan command and apply.
+The index step then raises a transient error on every attempt. Plan again without it to turn it
+off.
+
+### Cost
+
+On the cache-hit path Textract is not called. On the cache-miss path, Textract LAYOUT costs about
+0.004 USD per page (the 3-page run cost about 0.012 USD). Lambda, Step Functions, DynamoDB
+and EventBridge stayed within the free tier at this volume. The secret costs 0.40 USD per month,
+billed pro rata. Embeddings use the Pinecone free plan (one 39-page document is about 35,000
+tokens).
+
+### Measured (2026-10-19, cold starts)
+
+| Run | Execution | Lambda details |
+|---|---|---|
+| Cablivi SmPC, 39 pages, cache hit | 8 s | RegisterDocument 1.9 s (116 of 256 MB); IndexDocument, 138 chunks, 3.9 s (158 of 1024 MB) |
+| Cablivi medicine overview, 3 pages, cache miss | 27 s | Textract finished within the first 10 s wait; StartExtraction and CheckExtraction used 104 of 128 MB (since raised to 256 MB); SaveExtraction used 116 of 1024 MB |
+
+### Known limitations
+
+- The product name comes only from EMA file names (`<product>-epar-product-information...`).
+  For any other name it is empty and is not guessed. Chunks from such files (for example the
+  "medicine overview" PDF) are embedded without the product name, which can lower retrieval.
+- Errors raised by the Pinecone client are not classified as transient, so for example a
+  Pinecone 5xx makes the document `FAILED` at once instead of being retried.
+- If RegisterDocument fails, the run has no `doc_id` yet (the PDF was not hashed), so the
+  failure is only in the Step Functions execution, not in DynamoDB.
+- Two uploads of the same PDF at the same time are not serialized. Both runs write the same
+  chunk IDs, so the result is the same, but the status may flip between them.
+- The IN_PROGRESS loop back to Wait is covered only by unit tests. In the real runs Textract
+  always finished within the first wait.
+- Object keys are passed on as EventBridge delivers them. Only plain file names (no spaces) have
+  been tested.
+- The handlers' JSON log lines have no timestamp and no Lambda request ID of their own (the
+  runtime's lines have both). Sort by CloudWatch's `@timestamp`, and use `execution_arn` and
+  `step` to follow one run. `status` in the logs is the step's status (`STARTED`,
+  `SUCCEEDED`, `FAILED`). The document status (`INDEXED`) is only in DynamoDB, because
+  MarkIndexed writes it from Step Functions without a Lambda.
+- EventBridge has no dead-letter queue. A failed start shows only in the rule's
+  `FailedInvocations` metric.
+
+### Clean up
+
+```
+uv run --env-file .env -- scripts/cleanup.sh
+```
+
+It asks before each step. The steps are: delete the Pinecone namespace `pipeline`, delete the
+objects under `incoming/`, then run `terraform destroy`, which also removes the DynamoDB table
+and the bucket's EventBridge notification. `raw/` and `textract-cache/` are kept. At the end
+it prints the manual root steps for removing the deployer policy from the `rag-mock` user.
 
 ## Documents
 

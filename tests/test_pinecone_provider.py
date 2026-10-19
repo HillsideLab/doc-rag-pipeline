@@ -86,7 +86,7 @@ def vec(value: float = 1.0) -> list[float]:
 
 
 def test_providers_satisfy_interfaces() -> None:
-    assert isinstance(PineconeInferenceEmbedder(FakeInference()), Embedder)
+    assert isinstance(PineconeInferenceEmbedder(FakeInference(), model="m"), Embedder)
     assert isinstance(PineconeStore(FakeIndex(), embedder_name="m", dimension=DIM), VectorStore)
 
 
@@ -103,7 +103,7 @@ def test_embedder_uses_passage_and_query_input_types() -> None:
 
 def test_embedder_splits_into_batches_and_keeps_order() -> None:
     inference = FakeInference()
-    embedder = PineconeInferenceEmbedder(inference, dimension=DIM, batch_size=2)
+    embedder = PineconeInferenceEmbedder(inference, model="m", dimension=DIM, batch_size=2)
     vectors = embedder.embed_documents(["a", "bb", "ccc", "dddd", "eeeee"])
     assert [len(c["inputs"]) for c in inference.calls] == [2, 2, 1]
     assert [v[0] for v in vectors] == [1.0, 2.0, 3.0, 4.0, 5.0]
@@ -133,21 +133,21 @@ def test_reranker_with_no_documents_makes_no_request() -> None:
 
 def test_embedder_batches_by_length_but_returns_input_order() -> None:
     inference = FakeInference()
-    embedder = PineconeInferenceEmbedder(inference, dimension=DIM, batch_size=2)
+    embedder = PineconeInferenceEmbedder(inference, model="m", dimension=DIM, batch_size=2)
     vectors = embedder.embed_documents(["cccc", "a", "dddddd", "bb"])
     assert [c["inputs"] for c in inference.calls] == [["a", "bb"], ["cccc", "dddddd"]]
     assert [v[0] for v in vectors] == [4.0, 1.0, 6.0, 2.0]
 
 
 def test_estimate_tokens_counts_each_batch_at_its_longest_input() -> None:
-    embedder = PineconeInferenceEmbedder(FakeInference(), dimension=DIM, batch_size=2)
+    embedder = PineconeInferenceEmbedder(FakeInference(), model="m", dimension=DIM, batch_size=2)
     # batches by length: ["one", "two words"] -> 2 x 2 words, ["three words here"] -> 1 x 3
     estimate = embedder.estimate_tokens(["three words here", "one", "two words"])
     assert estimate == int((2 * 2 + 1 * 3) * 1.7)
 
 
 def test_embedder_rejects_wrong_dimension() -> None:
-    embedder = PineconeInferenceEmbedder(FakeInference(dimension=3), dimension=DIM)
+    embedder = PineconeInferenceEmbedder(FakeInference(dimension=3), model="m", dimension=DIM)
     with pytest.raises(ValueError):
         embedder.embed_query("q")
 
@@ -226,3 +226,11 @@ def test_from_env_names_the_missing_variable(monkeypatch: pytest.MonkeyPatch, mi
     monkeypatch.delenv(missing)
     with pytest.raises(RuntimeError, match=f"Set {missing} in .env"):
         PineconeStore.from_env(embedder_name="m")
+
+
+def test_embedder_from_env_needs_the_model_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No default model in code: the index was built with one model, so it must be named.
+    monkeypatch.setenv("PINECONE_API_KEY", "dummy-not-a-real-key")
+    monkeypatch.delenv("PINECONE_EMBED_MODEL", raising=False)
+    with pytest.raises(RuntimeError, match="Set PINECONE_EMBED_MODEL in .env"):
+        PineconeInferenceEmbedder.from_env()

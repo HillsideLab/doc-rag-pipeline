@@ -152,6 +152,12 @@ resource "aws_lambda_function" "step" {
     variables = local.lambda_environment
   }
 
+  # JSON for the runtime's own lines too (uncaught errors, START / END / REPORT), so every line
+  # in the log group is JSON. The handlers' lines keep their own format (logging_json.py).
+  logging_config {
+    log_format = "JSON"
+  }
+
   # The log group (7-day retention) and the permissions must exist before the first run.
   depends_on = [aws_cloudwatch_log_group.lambda, aws_iam_role_policy.lambda]
 }
