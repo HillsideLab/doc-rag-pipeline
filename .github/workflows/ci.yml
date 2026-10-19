@@ -22,3 +22,19 @@ jobs:
         run: uv run ruff format --check .
       - name: Unit tests
         run: uv run pytest
+
+  terraform:
+    # No AWS credentials: fmt and validate never call AWS.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: hashicorp/setup-terraform@v3
+      - name: Build the Lambda zip (validate reads its hash)
+        run: scripts/build_lambda.sh
+      - name: Format check
+        run: terraform -chdir=infra fmt -check
+      - name: Validate
+        run: |
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate

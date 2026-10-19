@@ -1,0 +1,157 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IamRolesWithPrefixOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole"
+      ],
+      "Resource": "arn:aws:iam::*:role/doc-rag-mock-*"
+    },
+    {
+      "Sid": "PassPrefixRolesToPipelineServicesOnly",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/doc-rag-mock-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": ["lambda.amazonaws.com", "states.amazonaws.com", "events.amazonaws.com"]
+        }
+      }
+    },
+    {
+      "Sid": "LambdaFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:DeleteFunction",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:ListVersionsByFunction",
+        "lambda:GetFunctionCodeSigningConfig",
+        "lambda:GetRuntimeManagementConfig",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:ListTags"
+      ],
+      "Resource": "arn:aws:lambda:*:*:function:doc-rag-mock-*"
+    },
+    {
+      "Sid": "StepFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "states:CreateStateMachine",
+        "states:UpdateStateMachine",
+        "states:DeleteStateMachine",
+        "states:DescribeStateMachine",
+        "states:ListStateMachineVersions",
+        "states:TagResource",
+        "states:UntagResource",
+        "states:ListTagsForResource",
+        "states:ListExecutions",
+        "states:DescribeExecution",
+        "states:GetExecutionHistory"
+      ],
+      "Resource": [
+        "arn:aws:states:*:*:stateMachine:doc-rag-mock-*",
+        "arn:aws:states:*:*:execution:doc-rag-mock-*:*"
+      ]
+    },
+    {
+      "Sid": "EventBridgeRule",
+      "Effect": "Allow",
+      "Action": [
+        "events:PutRule",
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:ListTargetsByRule",
+        "events:TagResource",
+        "events:UntagResource",
+        "events:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:events:*:*:rule/doc-rag-mock-*"
+    },
+    {
+      "Sid": "DynamoDbTable",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable",
+        "dynamodb:DeleteTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:UpdateTable",
+        "dynamodb:DescribeContinuousBackups",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:GetResourcePolicy",
+        "dynamodb:TagResource",
+        "dynamodb:UntagResource",
+        "dynamodb:ListTagsOfResource",
+        "dynamodb:GetItem",
+        "dynamodb:Scan"
+      ],
+      "Resource": "arn:aws:dynamodb:*:*:table/doc-rag-mock-*"
+    },
+    {
+      "Sid": "LambdaLogGroups",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:DeleteRetentionPolicy",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "logs:ListTagsForResource",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/aws/lambda/doc-rag-mock-*"
+    },
+    {
+      "Sid": "PineconeSecretContainer",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetResourcePolicy",
+        "secretsmanager:TagResource",
+        "secretsmanager:UntagResource",
+        "secretsmanager:PutSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:doc-rag-mock/*"
+    },
+    {
+      "Sid": "BucketNotificationOnly",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketNotification", "s3:PutBucketNotification"],
+      "Resource": "arn:aws:s3:::doc-rag-mock-*"
+    },
+    {
+      "Sid": "ReadOnlyActionsWithoutResourceLevelPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "events:TestEventPattern",
+        "states:ValidateStateMachineDefinition",
+        "cloudwatch:GetMetricStatistics"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

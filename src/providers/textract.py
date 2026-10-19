@@ -40,6 +40,11 @@ class TextractJobError(RuntimeError):
     """The Textract job ended in a state other than SUCCEEDED."""
 
 
+def doc_id_for(sha256: str) -> str:
+    """The document ID: the first 16 hex characters of the PDF's sha256."""
+    return sha256[:16]
+
+
 def _is_not_found(error: ClientError) -> bool:
     # GetObject reports "NoSuchKey"; HeadObject has no body, so only the HTTP code "404".
     return error.response["Error"]["Code"] in {"NoSuchKey", "404"}
@@ -74,15 +79,20 @@ class TextractExtractor:
     # --- Extractor interface ---
 
     def extract(self, source: str) -> ExtractedDocument:
-        sha256 = hashlib.sha256(self._read(source)).hexdigest()
+        sha256 = hashlib.sha256(self.read(source)).hexdigest()
         raw = self.load_cache(sha256)
         if raw is None:
             logger.info("textract cache miss sha256=%s", sha256)
             raw = self.analyze(source)
-            self._write_cache(sha256, raw)
+            self.write_cache(sha256, raw)
         else:
             logger.info("textract cache hit sha256=%s", sha256)
-        return textract_to_document(raw, doc_id=sha256[:16], source_file=PurePosixPath(source).name)
+        return textract_to_document(
+            raw, doc_id=doc_id_for(sha256), source_file=PurePosixPath(source).name
+        )
+
+    def read(self, key: str) -> bytes:
+        return self.s3.get_object(Bucket=self.bucket, Key=key)["Body"].read()
 
     # --- Helpers used by the CLI ---
 
@@ -112,16 +122,44 @@ class TextractExtractor:
             raise  # e.g. AccessDenied: do not treat it as a miss and pay for Textract
         return json.loads(response["Body"].read())
 
+    def write_cache(self, sha256: str, raw: dict[str, Any]) -> None:
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=self._cache_key(sha256),
+            Body=json.dumps(raw).encode(),
+            ContentType="application/json",
+        )
+
     # --- Textract async job (split so M6 Step Functions can reuse each step) ---
 
     def analyze(self, source: str) -> dict[str, Any]:
         job_id = self.start_job(source)
-        first_page = self.wait_for_job(job_id)
-        blocks = self.fetch_blocks(job_id, first_page)
+        return self.collect_results(job_id, self.wait_for_job(job_id))
+
+    def job_status(self, job_id: str) -> str:
+        """One status check for Step Functions polling: SUCCEEDED or IN_PROGRESS.
+
+        MaxResults=1 keeps the response small while the job is checked repeatedly.
+        """
+        response = self.textract.get_document_analysis(JobId=job_id, MaxResults=1)
+        status: str = response["JobStatus"]
+        if status not in {"SUCCEEDED", "IN_PROGRESS"}:
+            message = response.get("StatusMessage", "")
+            raise TextractJobError(f"job {job_id} ended with {status}: {message}")
+        return status
+
+    def fetch_result(self, job_id: str) -> dict[str, Any]:
+        """The merged result of a job that has already succeeded (no waiting)."""
+        first_page = self.textract.get_document_analysis(JobId=job_id)
+        if first_page["JobStatus"] != "SUCCEEDED":
+            raise TextractJobError(f"job {job_id} is {first_page['JobStatus']}, not SUCCEEDED")
+        return self.collect_results(job_id, first_page)
+
+    def collect_results(self, job_id: str, first_page: dict[str, Any]) -> dict[str, Any]:
         return {
             "DocumentMetadata": first_page["DocumentMetadata"],
             "FeatureTypes": FEATURE_TYPES,
-            "Blocks": blocks,
+            "Blocks": self.fetch_blocks(job_id, first_page),
         }
 
     def start_job(self, source: str) -> str:
@@ -166,16 +204,5 @@ class TextractExtractor:
 
     # --- private ---
 
-    def _read(self, key: str) -> bytes:
-        return self.s3.get_object(Bucket=self.bucket, Key=key)["Body"].read()
-
     def _cache_key(self, sha256: str) -> str:
         return f"{CACHE_PREFIX}{sha256}.json"
-
-    def _write_cache(self, sha256: str, raw: dict[str, Any]) -> None:
-        self.s3.put_object(
-            Bucket=self.bucket,
-            Key=self._cache_key(sha256),
-            Body=json.dumps(raw).encode(),
-            ContentType="application/json",
-        )

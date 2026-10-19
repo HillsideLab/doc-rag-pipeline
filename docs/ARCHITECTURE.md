@@ -12,7 +12,7 @@
 - `.python-version`: uv が使う Python のバージョン (3.12)。
 - `.gitignore`: `.env`、仮想環境、PDF、Terraform state などをコミット対象から外す。
 - `.env.example`: 環境変数の雛形。値は空かダミーのみで、実際の値は git 管理外の `.env` に書く。
-- `.github/workflows/ci.yml`: GitHub Actions。AWS 認証情報なしで ruff と pytest を実行する。
+- `.github/workflows/ci.yml`: GitHub Actions。AWS 認証情報なしで ruff と pytest、Lambda の zip の作成と `terraform fmt -check` / `validate` を実行する。
 - `src/__init__.py`: `src` をパッケージとして import できるようにする (中身は空)。
 - `tests/__init__.py`: テストディレクトリをパッケージにする (中身は空)。
 - `tests/test_smoke.py`: テストが 0 件で pytest が失敗しないための最小テスト。
@@ -27,7 +27,7 @@
 - `tests/test_chunking.py`: チャンキング規則のテスト。
 - `tests/test_fakes.py`: フェイク実装がインターフェースを満たし、正しく動くことのテスト。
 - `tests/test_offline_pipeline.py`: 抽出から引用付き回答までをフェイクだけで通す結合テスト。
-- `src/providers/textract.py`: Extractor の Textract 実装。S3 へのアップロード、sha256 による生 JSON キャッシュ、非同期ジョブのポーリング (指数バックオフ、NextToken のページング)。
+- `src/providers/textract.py`: Extractor の Textract 実装。S3 へのアップロード、sha256 による生 JSON キャッシュ、非同期ジョブのポーリング (指数バックオフ、NextToken のページング)。Step Functions 用に、1 回だけの状態確認 (`job_status`) と、完了済みジョブの結果の取得 (`fetch_result`) も持つ。
 - `src/providers/textract_parse.py`: Textract の生 JSON を `ExtractedDocument` に変換する純粋関数 (boto3 に依存しない)。
 - `scripts/extract_pdf.py`: ローカルの PDF 1 本を Textract で処理し、`data/extracted/<doc_id>.json` に保存する CLI。課金前に確認を求める。
 - `tests/fixtures/textract_layout_sample.json`: 手作りの小さな Textract 応答 (合成テキスト、2 段組・ヘッダ・フッタ・空ページを含む 3 ページ)。
@@ -54,6 +54,26 @@
 - `tests/test_answering.py`: 出典の項目、免責の文、0 件、doc_id での絞り込み、リランクの順序のテスト。
 - `tests/test_factory.py`: 既定値がフェイクであること、知らない値や禁止の組み合わせ、必須の変数がないときのテスト。本物のクライアントは作らない。
 - `tests/test_bedrock_generator.py`: Bedrock 実装のテスト。bedrock-runtime は自作のフェイクで、通信しない。
+- `src/pipeline/__init__.py`: `pipeline` をパッケージにする (中身は空)。
+- `src/pipeline/steps.py`: Step Functions の工程ごとの関数 (登録、Textract の開始・確認・保存、チャンク化と登録)。クライアントは引数で受け取る。再試行させる例外 `TransientError` もここで定める。
+- `src/pipeline/handlers.py`: Lambda のハンドラ 5 つ。環境変数を読み、クライアントを作り (コンテナが温かい間は再利用)、`steps.py` を呼ぶだけ。Pinecone のキーは Secrets Manager から読む。
+- `src/pipeline/logging_json.py`: Lambda のログを 1 行 1 JSON にする。`document_id`、`execution_arn`、`step`、`status` を必ず付け、本文やキーは出さない。
+- `scripts/build_lambda.sh`: Lambda 用の zip (`build/lambda.zip`) を作る。`src/` と、Linux x86_64 / Python 3.12 用の依存関係。boto3 と numpy は入れない。
+- `infra/versions.tf`: Terraform と AWS provider のバージョン、ローカル state、全リソースのタグ `Project=doc-rag-mock`。リージョンと認証情報は環境変数から読む。
+- `infra/variables.tf`: Terraform の変数 (バケット名、Pinecone のインデックス・namespace・モデル、テスト用の `force_fail_step`)。`force_fail_step` 以外は既定値なし。
+- `infra/dynamodb.tf`: 文書の処理状態のテーブル (`doc_id` のみのキー、オンデマンド)。
+- `infra/secrets.tf`: Pinecone の API キーを入れる Secrets Manager の入れ物。値は手で入れる。
+- `infra/lambda.tf`: Lambda 関数 5 つと、関数ごとのロール (最小権限) とロググループ (7 日保持)。
+- `infra/stepfunctions.tf`: ステートマシンとそのロール。
+- `infra/statemachine.asl.json`: ステートマシンの定義 (状態の流れ、再試行、失敗時の経路)。
+- `infra/events.tf`: 既存バケットの EventBridge 通知の有効化、`incoming/` だけを拾うルール、ステートマシンを起動するロール。
+- `infra/outputs.tf`: ステートマシンの ARN、テーブル名、シークレットの ARN などの出力。
+- `infra/.terraform.lock.hcl`: AWS provider のバージョンとハッシュの固定。CI でも同じものを使うためにコミットする。
+- `infra/deployer-policy.json`: `terraform apply` のために `rag-mock` ユーザーへ追加する IAM ポリシー。リソース名 `doc-rag-mock-*` に限定。
+- `tests/aws_fakes.py`: S3 / Textract / DynamoDB / Secrets Manager の小さなフェイク。複数のテストで共有する。
+- `tests/test_pipeline_steps.py`: 工程ごとの関数のテスト (キャッシュの有無、ジョブの状態、タイムアウト、DynamoDB に書く内容)。
+- `tests/test_pipeline_handlers.py`: ハンドラのテスト (別のバケットの拒否、`FORCE_FAIL_STEP`、ログが JSON で本文やキーを含まないこと、キーの読み込みが 1 回だけなこと)。
+- `tests/test_state_machine.py`: ステートマシンの定義のテスト (再試行は計 3 回、失敗時は必ず MarkFailed、キャッシュがあれば Textract を飛ばす、遷移先が存在する)。
 
 ## 設計メモ
 
@@ -147,3 +167,16 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 
 ### 回答の評価 (StubGenerator、本物の Pinecone + リランク、top_k=5)
 `scripts/eval_answers.py` で、評価セットの 5 問に答えた。出典に正解のチャンクが 1 つでも入った質問は 5/5、正解のうち出典に入った割合の平均は 0.85。Stub は上位 5 件をすべて出典にするので、M3 のリランクありの hit@5 (5/5、0.85) と一致する。1 回の実行で、埋め込み 66 トークン、リランク 5 リクエスト。
+
+### イベント駆動のパイプライン (M6)
+1. 流れ: S3 の `incoming/` に PDF → EventBridge → Step Functions (Standard) → Lambda。状態は DynamoDB の `doc-rag-mock-documents` に RECEIVED → INDEXED / FAILED で記録する。
+2. 工程: RegisterDocument (sha256 を計算し RECEIVED、キャッシュの有無を返す) → キャッシュがなければ StartExtraction → Wait 10 秒 → CheckExtraction → 未完了なら Wait に戻る → SaveExtraction (結果をキャッシュに保存) → IndexDocument (チャンク化と Pinecone への登録) → MarkIndexed。
+3. Textract の完了待ちは Lambda の中ではなく、Step Functions の Wait と Choice で行う。Lambda の中で待つと待ち時間も課金され、15 分の上限にも当たるため。600 秒を超えたら CheckExtraction が TimeoutError を出す。
+4. 状態の間で渡すのは ID とフラグと件数だけ (Step Functions の上限は 256 KB)。Textract の結果は既存の S3 キャッシュ (`textract-cache/<sha256>.json`) を通して渡す。キャッシュは受け渡しと二重課金の防止を兼ねる。同じ理由で、チャンク化と埋め込み・登録は 1 つの Lambda にまとめた。
+5. 再試行は一時的なエラー (Lambda 側の障害とスロットリング、`TransientError`) だけで、最大計 3 回 (`MaxAttempts: 2`、間隔 2 秒から倍)。Textract の失敗、タイムアウト、入力の誤りは再試行せずにすぐ FAILED にする。同じ入力で再実行しても同じ結果になるため。
+6. MarkIndexed と MarkFailed は Lambda を使わず、Step Functions から DynamoDB を直接更新する。Lambda のパッケージが壊れていても FAILED の記録は残る。RegisterDocument の失敗だけは、`doc_id` がまだないので DynamoDB に書かず、実行の失敗として残る。
+7. EventBridge のルールは、このバケットの `incoming/` の Object Created だけを拾う。パイプラインが書くのは `textract-cache/` だけで、どの Lambda のロールにも `incoming/` への書き込み権限はない。パイプラインが自分自身を起動することはない。
+8. Pinecone には `pipeline` namespace で書く。M3 で手で登録した default namespace のデータには触れない。
+9. Lambda は 1 つの zip を 5 関数で共有する (handler 名だけが違う)。Python 3.12、x86_64、VPC なし。boto3 はランタイムに入っているものを使う。
+10. Pinecone の API キーは Secrets Manager から、コンテナごとに 1 回だけ読む。Terraform が作るのは入れ物だけなので、キーは tfvars にも state にも入らない。
+11. テスト用に、環境変数 `FORCE_FAIL_STEP` で指定した工程が `TransientError` を出す。再試行と FAILED の経路を本物で確かめるため。普段は空。

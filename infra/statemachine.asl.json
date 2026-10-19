@@ -1,0 +1,186 @@
+{
+  "Comment": "doc-rag-mock: PDF in incoming/ -> Textract (skipped on a cache hit) -> chunks -> Pinecone. Status in DynamoDB.",
+  "StartAt": "RegisterDocument",
+  "States": {
+    "RegisterDocument": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${register_arn}",
+        "Payload": { "state.$": "$", "execution_arn.$": "$$.Execution.Id" }
+      },
+      "ResultSelector": {
+        "doc_id.$": "$.Payload.doc_id",
+        "sha256.$": "$.Payload.sha256",
+        "cached.$": "$.Payload.cached"
+      },
+      "ResultPath": "$.doc",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException", "TransientError"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "RegisterFailed" }],
+      "Next": "CacheHit"
+    },
+    "RegisterFailed": {
+      "Comment": "No doc_id yet (the PDF was not hashed), so there is no DynamoDB item to mark.",
+      "Type": "Fail",
+      "ErrorPath": "$.error.Error",
+      "CausePath": "$.error.Cause"
+    },
+    "CacheHit": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.doc.cached", "BooleanEquals": true, "Next": "IndexDocument" }],
+      "Default": "StartExtraction"
+    },
+    "StartExtraction": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${start_extraction_arn}",
+        "Payload": { "state.$": "$", "execution_arn.$": "$$.Execution.Id" }
+      },
+      "ResultSelector": {
+        "job_id.$": "$.Payload.job_id",
+        "started_at.$": "$.Payload.started_at"
+      },
+      "ResultPath": "$.job",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException", "TransientError"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "WaitForTextract"
+    },
+    "WaitForTextract": {
+      "Comment": "Waiting here instead of inside a Lambda: no billed idle time and no 15-minute limit.",
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "CheckExtraction"
+    },
+    "CheckExtraction": {
+      "Comment": "Returns SUCCEEDED or IN_PROGRESS; a failed job or a job over 600 s raises (not retried).",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${check_extraction_arn}",
+        "Payload": { "state.$": "$", "execution_arn.$": "$$.Execution.Id" }
+      },
+      "ResultSelector": { "status.$": "$.Payload.status" },
+      "ResultPath": "$.job_status",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException", "TransientError"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "JobDone"
+    },
+    "JobDone": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.job_status.status", "StringEquals": "SUCCEEDED", "Next": "SaveExtraction" }],
+      "Default": "WaitForTextract"
+    },
+    "SaveExtraction": {
+      "Comment": "Writes the merged Textract JSON to textract-cache/<sha256>.json; only a count comes back.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${save_extraction_arn}",
+        "Payload": { "state.$": "$", "execution_arn.$": "$$.Execution.Id" }
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException", "TransientError"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "IndexDocument"
+    },
+    "IndexDocument": {
+      "Comment": "Chunk and EmbedAndIndex in one Lambda: the chunks would not fit in the 256 KB state.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${index_document_arn}",
+        "Payload": { "state.$": "$", "execution_arn.$": "$$.Execution.Id" }
+      },
+      "ResultSelector": {
+        "page_count.$": "$.Payload.page_count",
+        "chunk_count.$": "$.Payload.chunk_count"
+      },
+      "ResultPath": "$.index",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException", "TransientError"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "MarkIndexed"
+    },
+    "MarkIndexed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Key": { "doc_id": { "S.$": "$.doc.doc_id" } },
+        "UpdateExpression": "SET #status = :status, page_count = :pages, chunk_count = :chunks, updated_at = :now",
+        "ExpressionAttributeNames": { "#status": "status" },
+        "ExpressionAttributeValues": {
+          ":status": { "S": "INDEXED" },
+          ":pages": { "N.$": "States.Format('{}', $.index.page_count)" },
+          ":chunks": { "N.$": "States.Format('{}', $.index.chunk_count)" },
+          ":now": { "S.$": "$$.State.EnteredTime" }
+        }
+      },
+      "ResultPath": null,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "MarkFailed" }],
+      "Next": "Indexed"
+    },
+    "Indexed": {
+      "Type": "Succeed"
+    },
+    "MarkFailed": {
+      "Comment": "Written by Step Functions directly, so a broken Lambda package still leaves a FAILED record.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Key": { "doc_id": { "S.$": "$.doc.doc_id" } },
+        "UpdateExpression": "SET #status = :status, #error = :error, cause = :cause, updated_at = :now",
+        "ExpressionAttributeNames": { "#status": "status", "#error": "error" },
+        "ExpressionAttributeValues": {
+          ":status": { "S": "FAILED" },
+          ":error": { "S.$": "$.error.Error" },
+          ":cause": { "S.$": "$.error.Cause" },
+          ":now": { "S.$": "$$.State.EnteredTime" }
+        }
+      },
+      "ResultPath": null,
+      "Next": "Failed"
+    },
+    "Failed": {
+      "Type": "Fail",
+      "ErrorPath": "$.error.Error",
+      "CausePath": "$.error.Cause"
+    }
+  }
+}

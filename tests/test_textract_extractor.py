@@ -1,5 +1,4 @@
 import hashlib
-import io
 import json
 from pathlib import Path
 from typing import Any
@@ -9,6 +8,7 @@ from botocore.exceptions import ClientError
 
 from src.providers.base import Extractor
 from src.providers.textract import TextractExtractor, TextractJobError
+from tests.aws_fakes import DeniedS3, FakeS3, FakeTextract
 
 FIXTURE = Path(__file__).parent / "fixtures" / "textract_layout_sample.json"
 BUCKET = "test-bucket"
@@ -16,50 +16,6 @@ PDF_KEY = "raw/leaflet.pdf"
 PDF_BYTES = b"%PDF-1.7 synthetic test bytes"
 SHA256 = hashlib.sha256(PDF_BYTES).hexdigest()
 CACHE_KEY = f"textract-cache/{SHA256}.json"
-
-
-class FakeS3:
-    """S3 kept in a dict. Raises the same ClientError codes as real S3 for missing keys."""
-
-    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
-        self.objects = dict(objects or {})
-
-    def put_object(self, Bucket: str, Key: str, Body: bytes, **_: Any) -> None:
-        self.objects[Key] = Body
-
-    def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:
-        if Key not in self.objects:
-            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-        return {"Body": io.BytesIO(self.objects[Key])}
-
-    def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:
-        if Key not in self.objects:
-            raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
-        return {}
-
-
-class DeniedS3(FakeS3):
-    def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:
-        if Key.startswith("textract-cache/"):
-            raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
-        return super().get_object(Bucket, Key)
-
-
-class FakeTextract:
-    """Replays a script of GetDocumentAnalysis responses and records every call."""
-
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
-        self.responses = list(responses)
-        self.start_calls: list[dict[str, Any]] = []
-        self.get_calls: list[dict[str, Any]] = []
-
-    def start_document_analysis(self, **kwargs: Any) -> dict[str, Any]:
-        self.start_calls.append(kwargs)
-        return {"JobId": "job-1"}
-
-    def get_document_analysis(self, **kwargs: Any) -> dict[str, Any]:
-        self.get_calls.append(kwargs)
-        return self.responses.pop(0)
 
 
 def fixture_raw() -> dict[str, Any]:
@@ -190,3 +146,39 @@ def test_has_cache_and_upload(tmp_path: Path) -> None:
 
     s3.objects[CACHE_KEY] = b"{}"
     assert extractor.has_cache(SHA256) is True
+
+
+def test_job_status_asks_for_one_result_only() -> None:
+    textract = FakeTextract([IN_PROGRESS, succeeded(fixture_raw()["Blocks"])])
+    extractor, _ = make(FakeS3(), textract)
+
+    assert extractor.job_status("job-1") == "IN_PROGRESS"
+    assert extractor.job_status("job-1") == "SUCCEEDED"
+    assert textract.get_calls == [{"JobId": "job-1", "MaxResults": 1}] * 2
+
+
+@pytest.mark.parametrize("status", ["FAILED", "PARTIAL_SUCCESS"])
+def test_job_status_raises_on_unsuccessful_job(status: str) -> None:
+    extractor, _ = make(FakeS3(), FakeTextract([{"JobStatus": status}]))
+
+    with pytest.raises(TextractJobError, match=status):
+        extractor.job_status("job-1")
+
+
+def test_fetch_result_joins_pages_without_waiting() -> None:
+    blocks = fixture_raw()["Blocks"]
+    half = len(blocks) // 2
+    textract = FakeTextract([succeeded(blocks[:half], next_token="t1"), succeeded(blocks[half:])])
+    extractor, sleeps = make(FakeS3(), textract)
+
+    raw = extractor.fetch_result("job-1")
+
+    assert raw["Blocks"] == blocks and raw["FeatureTypes"] == ["LAYOUT"]
+    assert sleeps == []
+
+
+def test_fetch_result_refuses_unfinished_job() -> None:
+    extractor, _ = make(FakeS3(), FakeTextract([IN_PROGRESS]))
+
+    with pytest.raises(TextractJobError, match="IN_PROGRESS"):
+        extractor.fetch_result("job-1")
