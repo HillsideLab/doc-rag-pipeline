@@ -12,6 +12,7 @@ VARIABLES = (
     "GENERATOR",
     "PINECONE_API_KEY",
     "PINECONE_INDEX",
+    "PINECONE_NAMESPACE",
     "BEDROCK_INFERENCE_PROFILE_ID",
 )
 
@@ -79,3 +80,30 @@ def test_bedrock_without_profile_id_fails(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("GENERATOR", "bedrock")
     with pytest.raises(RuntimeError, match="BEDROCK_INFERENCE_PROFILE_ID"):
         factory.build_generator()
+
+
+def test_selected_names_follow_the_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert factory.selected() == {"embedder": "fake", "vector_store": "memory", "reranker": "none"}
+    monkeypatch.setenv("RERANKER", "Pinecone")
+    assert factory.selected()["reranker"] == "pinecone"
+
+
+@pytest.mark.parametrize(("value", "namespace"), [("__default__", ""), (" pipeline ", "pipeline")])
+def test_pinecone_namespace(monkeypatch: pytest.MonkeyPatch, value: str, namespace: str) -> None:
+    monkeypatch.setenv("PINECONE_NAMESPACE", value)
+    assert factory.pinecone_namespace() == namespace
+
+
+def test_pinecone_namespace_has_no_default() -> None:
+    with pytest.raises(RuntimeError, match="PINECONE_NAMESPACE"):
+        factory.pinecone_namespace()
+
+
+def test_build_store_passes_the_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.providers.pinecone import PineconeInferenceEmbedder, PineconeStore
+
+    calls: list[dict[str, str]] = []
+    monkeypatch.setattr(PineconeStore, "from_env", classmethod(lambda cls, **kw: calls.append(kw)))
+    monkeypatch.setenv("VECTOR_STORE", "pinecone")
+    factory.build_store(PineconeInferenceEmbedder(object(), model="m"), namespace="pipeline")
+    assert calls == [{"embedder_name": "m", "namespace": "pipeline"}]

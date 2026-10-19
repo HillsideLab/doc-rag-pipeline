@@ -1,8 +1,10 @@
-"""JSON logs for the Lambda handlers: one JSON object per line.
+"""JSON logs for the Lambda handlers and the local API: one JSON object per line.
 
-Every line carries document_id, execution_arn, step and status, so one document can be
-followed through CloudWatch Logs. Only the message and these named fields are written:
-never the event, the API key, document text, or exception arguments.
+Every Lambda line carries document_id, execution_arn, step and status, so one document can be
+followed through CloudWatch Logs. API lines carry request_id, method, path, status_code and
+duration_ms; the startup line carries the provider names. Only the message and these named
+fields are written: never the event, the question, the API key, document text, or exception
+arguments.
 """
 
 import json
@@ -11,7 +13,23 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-FIELDS = ("document_id", "execution_arn", "step", "status", "error_type")
+FIELDS = (
+    "document_id",
+    "execution_arn",
+    "step",
+    "status",
+    "error_type",
+    # API (src/api/main.py): one line per request, and provider names at startup
+    "request_id",
+    "method",
+    "path",
+    "status_code",
+    "duration_ms",
+    "embedder",
+    "vector_store",
+    "reranker",
+    "generator",
+)
 QUIET_LOGGERS = ("botocore", "boto3", "urllib3", "httpx", "httpcore", "pinecone")
 
 logger = logging.getLogger("pipeline")
