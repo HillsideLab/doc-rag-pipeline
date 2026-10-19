@@ -112,7 +112,7 @@ def test_embedder_splits_into_batches_and_keeps_order() -> None:
 
 def test_reranker_satisfies_interface_and_maps_results() -> None:
     inference = FakeInference()
-    reranker = PineconeReranker(inference)
+    reranker = PineconeReranker(inference, model="bge-reranker-v2-m3")
     assert isinstance(reranker, Reranker)
 
     ranked = reranker.rerank("q", ["aa", "aaaa", "a"], top_n=2)
@@ -127,7 +127,7 @@ def test_reranker_satisfies_interface_and_maps_results() -> None:
 
 def test_reranker_with_no_documents_makes_no_request() -> None:
     inference = FakeInference()
-    assert PineconeReranker(inference).rerank("q", [], top_n=5) == []
+    assert PineconeReranker(inference, model="m").rerank("q", [], top_n=5) == []
     assert inference.calls == []
 
 
@@ -226,6 +226,13 @@ def test_from_env_names_the_missing_variable(monkeypatch: pytest.MonkeyPatch, mi
     monkeypatch.delenv(missing)
     with pytest.raises(RuntimeError, match=f"Set {missing} in .env"):
         PineconeStore.from_env(embedder_name="m")
+
+
+def test_reranker_from_env_needs_the_model_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PINECONE_API_KEY", "not-a-real-key")
+    monkeypatch.delenv("PINECONE_RERANK_MODEL", raising=False)
+    with pytest.raises(RuntimeError, match="Set PINECONE_RERANK_MODEL in .env"):
+        PineconeReranker.from_env()
 
 
 def test_embedder_from_env_needs_the_model_name(monkeypatch: pytest.MonkeyPatch) -> None:

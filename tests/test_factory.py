@@ -71,6 +71,7 @@ def test_pinecone_without_key_fails_before_any_call(
 ) -> None:
     monkeypatch.setenv(variable, "pinecone")
     monkeypatch.setenv("PINECONE_EMBED_MODEL", "m")  # so the missing key is what fails
+    monkeypatch.setenv("PINECONE_RERANK_MODEL", "m")
     monkeypatch.delenv("PINECONE_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="PINECONE_API_KEY"):
         build()

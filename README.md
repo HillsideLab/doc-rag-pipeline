@@ -8,8 +8,8 @@ It is not production software. See `SPEC.md` for scope.
 - **Not medical advice.** This is a technical prototype. Its answers are not medical advice
   and must not be used for any clinical or treatment decision.
 
-Status: work in progress (milestone M6, event-driven pipeline on AWS). See "Verified components"
-for what has been run against real services.
+Status: work in progress (milestone M5, local HTTP API; M6, the event-driven pipeline on AWS,
+is done). See "Verified components" for what has been run against real services.
 
 ## Verified components
 
@@ -27,6 +27,7 @@ A component is marked "verified" only after a real call has succeeded.
 | Pipeline cache-miss path: StartExtraction -> Wait -> CheckExtraction -> SaveExtraction (writes the Textract cache) -> Index | verified 2026-10-19 (Cablivi medicine overview, 3 pages, 12 chunks; Textract finished within the first 10 s wait, so the IN_PROGRESS loop back to Wait has not run for real; the cache write did not start another execution) |
 | Retries of transient errors (3 attempts in total, then `FAILED`) | verified 2026-10-19 (forced with `force_fail_step = "index"`: IndexDocument ran 3 times, with waits of 2 s and 4 s, then MarkFailed set `FAILED` / `TransientError`; Pinecone was not touched) |
 | Lambda logs as JSON (`log_format = "JSON"`): every line in the log group is JSON; `step`, `status`, `document_id` and `execution_arn` are top-level fields | verified 2026-10-19 (read with `aws logs filter-log-events`; CloudWatch Logs Insights queries were not tried) |
+| HTTP API on 127.0.0.1 (FastAPI): `POST /ask` from the Swagger UI, `StubGenerator` over Pinecone retrieval + reranking; `GET /health` | verified 2026-10-19 (1 `/ask` request: 200 in 3.9 s; the citations included Cablivi 6.1 List of excipients, pages 10 and 11; the log line had no question text) |
 | `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
 
@@ -84,6 +85,65 @@ Result on the 5 evaluation questions (StubGenerator, Pinecone + reranking, `top_
 answers cite at least one expected chunk; the mean share of expected chunks cited is 0.85.
 This matches retrieval hit@5 with reranking, because the stub cites every retrieved chunk.
 One run used 66 embedding tokens and 5 rerank requests.
+
+## HTTP API (M5)
+
+**Local demo only. There is no authentication, so it is not for production.** The server
+listens on `127.0.0.1:8000` only. It wraps the same `answer_question()` as `scripts/ask.py`.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /ask` | `{question, top_k}` -> `{answer, citations[{chunk_id, file, product, section, page, chunk_type}], generator, disclaimer}` |
+| `GET /health` | Liveness and the provider names. It calls no external service. |
+| `GET /docs` | Swagger UI. "Try it out" on `/ask` starts with an example question. |
+
+Settings for the demo, in `.env` (see `.env.example`):
+
+| Variable | Demo value | Notes |
+|---|---|---|
+| `EMBEDDER` | `pinecone` | must match the index (one index, one embedder) |
+| `VECTOR_STORE` | `pinecone` | |
+| `RERANKER` | `pinecone` | one rerank request per `/ask` (free plan: 500 per month) |
+| `GENERATOR` | `stub` | no generative model; swapped by this variable alone |
+| `PINECONE_NAMESPACE` | `__default__` | required, no default in code; `__default__` is the default namespace (the M3 data) |
+
+The Pinecone settings from "Index and search with Pinecone" are also needed:
+`PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_EMBED_MODEL`, `PINECONE_RERANK_MODEL`.
+Providers are built once at startup, so a missing setting stops the server with the variable's
+name instead of failing on the first request.
+
+```
+uv run --env-file .env python -m src.api      # http://127.0.0.1:8000/docs
+```
+
+Demo steps:
+
+1. Open `http://127.0.0.1:8000/health` and check that `embedder`, `vector_store` and
+   `reranker` are `pinecone` and `generator` is `stub`. The startup log line shows the same
+   names.
+2. Open `http://127.0.0.1:8000/docs`, choose `POST /ask`, then "Try it out" and "Execute" with
+   the example question "What are the excipients of Cablivi?".
+3. The answer lists the retrieved passages with their citations (product, section, page,
+   chunk ID) and the disclaimer.
+
+Input and errors:
+
+- `question` is 1 to 1000 characters after trimming spaces, and `top_k` is 1 to 20 (default 5).
+  Anything else returns `422`. FastAPI's 422 body repeats the invalid input to the caller.
+- If an external service fails, `/ask` returns `502` with a fixed message and a `request_id`.
+  The response has no exception text, no key, and no index name. The server log has the same
+  `request_id` and the error's class name only.
+- Logs are JSON lines, the same format as the Lambda logs: one line per request with
+  `request_id`, `method`, `path`, `status_code` and `duration_ms`. The question, the request
+  body, query strings and headers are never logged. Every response has an `X-Request-ID` header.
+
+OpenAPI: `docs/openapi.json` is generated from the code and committed. CI checks that it is up
+to date. After changing the API or upgrading FastAPI or Pydantic, regenerate it:
+
+```
+uv run python -m scripts.export_openapi           # write docs/openapi.json
+uv run python -m scripts.export_openapi --check   # what CI runs
+```
 
 ## Event-driven pipeline on AWS (M6)
 
@@ -182,6 +242,9 @@ tokens).
   MarkIndexed writes it from Step Functions without a Lambda.
 - EventBridge has no dead-letter queue. A failed start shows only in the rule's
   `FailedInvocations` metric.
+- In answers, the same ingredient list from the labelling section (for example
+  "3. LIST OF EXCIPIENTS" on several pack labels) can fill the top places. Near-duplicate
+  passages are not removed yet.
 
 ### Clean up
 
@@ -225,7 +288,8 @@ us-east-1) and the hosted Inference API. Textract is not called; the input is th
 re-indexing everything.
 
 ```
-# .env needs PINECONE_API_KEY and PINECONE_INDEX
+# .env needs PINECONE_API_KEY, PINECONE_INDEX, PINECONE_EMBED_MODEL
+# and, for --rerank, PINECONE_RERANK_MODEL (no defaults in code)
 uv run --env-file .env python -m scripts.index_documents          # asks before writing
 uv run --env-file .env python -m scripts.search "Can Aubagio be used during pregnancy?" --rerank
 uv run --env-file .env python -m scripts.eval_retrieval --rerank  # hit@5 / recall@5

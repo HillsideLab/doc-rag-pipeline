@@ -12,7 +12,7 @@
 - `.python-version`: uv が使う Python のバージョン (3.12)。
 - `.gitignore`: `.env`、仮想環境、PDF、Terraform の state と plan ファイル、Lambda のビルド結果 (`build/`) などをコミット対象から外す。
 - `.env.example`: 環境変数の雛形。値は空かダミーのみで、実際の値は git 管理外の `.env` に書く。
-- `.github/workflows/ci.yml`: GitHub Actions。AWS 認証情報なしで ruff と pytest、Lambda の zip の作成と `terraform fmt -check` / `validate` を実行する。
+- `.github/workflows/ci.yml`: GitHub Actions。AWS 認証情報なしで ruff と pytest、Lambda の zip の作成と `terraform fmt -check` / `validate`、`docs/openapi.json` がコードと一致するかの確認を実行する。
 - `src/__init__.py`: `src` をパッケージとして import できるようにする (中身は空)。
 - `tests/__init__.py`: テストディレクトリをパッケージにする (中身は空)。
 - `tests/test_smoke.py`: テストが 0 件で pytest が失敗しないための最小テスト。
@@ -35,7 +35,7 @@
 - `tests/test_textract_extractor.py`: キャッシュ判定、ポーリング、ページング、失敗時の扱いのテスト。S3 と Textract は自作のフェイク。
 - `tests/test_textract_integration.py`: 本物の S3 と Textract を呼ぶテスト (`-m integration` のときだけ実行)。
 - `src/indexing.py`: 埋め込む文字列の組み立て (section + 本文)、1 文書の登録 (入れ直し)、質問での検索。どの Embedder / VectorStore でも動く。
-- `src/providers/pinecone.py`: Embedder と Reranker の Pinecone Inference API 実装と、VectorStore の Pinecone 実装 (dense インデックス)。
+- `src/providers/pinecone.py`: Embedder と Reranker の Pinecone Inference API 実装と、VectorStore の Pinecone 実装 (dense インデックス)。埋め込みとリランクのモデル名はどちらも環境変数で必須 (コードに既定値なし)。
 - `scripts/index_documents.py`: `data/extracted/` の抽出結果をチャンクに分け、Pinecone に登録する CLI。書き込み前に確認を求める。Textract は呼ばない。
 - `scripts/search.py`: 質問を投げ、上位のチャンク (chunk_id、ページ、section、スコア) を表示する CLI。読み取りのみ。
 - `tests/test_indexing.py`: 埋め込む文字列の規則、入れ直しで古いチャンクが残らないこと、doc_id での絞り込みのテスト (フェイクのみ)。
@@ -47,7 +47,7 @@
 - `tests/test_evaluation.py`: hit@k / recall@k の計算と、質問ファイルの形式のテスト。
 - `src/citations.py`: チャンクから出典 (chunk_id、ファイル、製品名、section、ページ、種類) と、回答やプロンプトに出す 1 行の表示を作る。すべての Generator が使う。
 - `src/answering.py`: 質問応答の本体 `answer_question` (検索 → 生成 → 免責の文を付ける)。CLI、API (M5)、Lambda (M6) から同じ関数を呼ぶ。
-- `src/providers/factory.py`: 環境変数 `EMBEDDER` / `VECTOR_STORE` / `RERANKER` / `GENERATOR` から実装を選ぶ。既定はすべてフェイク。
+- `src/providers/factory.py`: 環境変数 `EMBEDDER` / `VECTOR_STORE` / `RERANKER` / `GENERATOR` から実装を選ぶ。既定はすべてフェイク。API 用に、選んだ名前だけを返す `selected()` と、`PINECONE_NAMESPACE` を読む `pinecone_namespace()` (必須、`__default__` は default namespace) も持つ。
 - `src/providers/bedrock.py`: Generator の Bedrock Claude 実装 (Converse API、推論プロファイル ID)。**未検証** (アカウントの制限で Bedrock を呼べないため、フェイクのクライアントでのみテスト)。
 - `scripts/ask.py`: 質問 1 つに答え、回答・出典・免責の文を表示する CLI。実装は環境変数で選ぶ。読み取りのみ。
 - `scripts/eval_answers.py`: 評価セットの 5 問に答え、出典に正解のチャンクが含まれるかを数え、使った量を表示する CLI。読み取りのみ。
@@ -57,7 +57,7 @@
 - `src/pipeline/__init__.py`: `pipeline` をパッケージにする (中身は空)。
 - `src/pipeline/steps.py`: Step Functions の工程ごとの関数 (登録、Textract の開始・確認・保存、チャンク化と登録)。クライアントは引数で受け取る。再試行させる例外 `TransientError` もここで定める。
 - `src/pipeline/handlers.py`: Lambda のハンドラ 5 つ。環境変数を読み、クライアントを作り (コンテナが温かい間は再利用)、`steps.py` を呼ぶだけ。Pinecone のキーは Secrets Manager から読む。
-- `src/pipeline/logging_json.py`: Lambda のログを 1 行 1 JSON にする。`document_id`、`execution_arn`、`step`、`status` を必ず付け、本文やキーは出さない。
+- `src/pipeline/logging_json.py`: Lambda と API のログを 1 行 1 JSON にする。Lambda は `document_id`、`execution_arn`、`step`、`status`、API は `request_id`、`method`、`path`、`status_code`、`duration_ms` と起動時の provider 名を付ける。質問文、本文、キーは出さない。
 - `scripts/build_lambda.sh`: Lambda 用の zip (`build/lambda.zip`) を作る。`src/` と、Linux x86_64 / Python 3.12 用の依存関係。boto3 と numpy は入れない。
 - `scripts/cleanup.sh`: M6 で作ったものを片付ける (Pinecone の `pipeline` namespace、`incoming/` のファイル、`terraform destroy`)。段階ごとに確認を取る。最後に、deployer ポリシーを root で外す手作業の手順を表示する。
 - `infra/versions.tf`: Terraform と AWS provider のバージョン、ローカル state、全リソースのタグ `Project=doc-rag-mock`。リージョンと認証情報は環境変数から読む。
@@ -75,6 +75,13 @@
 - `tests/test_pipeline_steps.py`: 工程ごとの関数のテスト (キャッシュの有無、ジョブの状態、タイムアウト、DynamoDB に書く内容)。
 - `tests/test_pipeline_handlers.py`: ハンドラのテスト (別のバケットの拒否、`FORCE_FAIL_STEP`、ログが JSON で本文やキーを含まないこと、キーの読み込みが 1 回だけなこと)。
 - `tests/test_state_machine.py`: ステートマシンの定義のテスト (再試行は計 3 回、失敗時は必ず MarkFailed、キャッシュがあれば Textract を飛ばす、遷移先が存在する)。
+- `src/api/__init__.py`: `api` をパッケージにする (中身は空)。
+- `src/api/schemas.py`: API の入力 (`AskRequest`: 質問は 1〜1000 文字、`top_k` は 1〜20、Swagger の例の質問)、エラー (`ErrorResponse`)、`/health` の応答。`/ask` の応答はコアの `Answer` をそのまま使う。
+- `src/api/main.py`: FastAPI のアプリ。`POST /ask` (`answer_question` を呼ぶだけ) と `GET /health`。provider は起動時に 1 回だけ組み立てる。外部サービスの失敗は 502 で、内部情報を返さない。リクエストごとに JSON のログを 1 行出す。
+- `src/api/__main__.py`: `python -m src.api` で API を起動する。認証がないので `127.0.0.1` だけで待ち受ける。
+- `scripts/export_openapi.py`: OpenAPI の定義を `docs/openapi.json` に書き出す。`--check` で、コミット済みのものとコードが一致するかを確かめる (CI で使う)。
+- `docs/openapi.json`: コードから生成した OpenAPI の定義。手で編集しない。
+- `tests/test_api.py`: API のテスト (TestClient とフェイクのみ)。正常系、入力の検証 (422)、外部エラー (502 で内部情報を出さない)、ログに質問文が出ないこと、起動ログ、`/health`、`docs/openapi.json` との一致。
 
 ## 設計メモ
 
@@ -187,3 +194,9 @@ Extractor は Textract の生 JSON ではなく、自前の `ExtractedDocument` 
 15. MarkFailed は前回の `page_count` / `chunk_count` を消す。INDEXED の後に FAILED になった項目で、古い件数が今回の結果に見えないようにするため。
 16. Lambda のログ形式は JSON (`logging_config`)。本番で確認済み (2026-10-19): ロググループの全行が JSON で、START / REPORT も `platform.start` / `platform.report` の JSON になる (メモリは `record.metrics.maxMemoryUsedMB`)。ハンドラの行は `logging_json.py` の形のままで、`step` / `status` / `document_id` / `execution_arn` が `message` の中の文字列ではなく最上位の項目として入る。自前の行には時刻と requestId がない (時刻は CloudWatch の `@timestamp` で並べる)。`status` は工程の状態 (STARTED / SUCCEEDED / FAILED) で、文書の `INDEXED` は DynamoDB にだけある (MarkIndexed は Lambda を通らない)。Logs Insights でのクエリは、権限を付けていないため試していない。
 17. 本番で確かめたこと: キャッシュあり / なしの経路、一時的なエラーの再試行 (計 3 回、待ち 2 秒・4 秒)、再試行しない失敗 (設定の不足、Textract の `INVALID_IMAGE_TYPE`)。Wait に戻るループ (IN_PROGRESS) は、Textract が最初の 10 秒で終わったため本番では通っていない。
+18. API (M5) は `answer_question` を包むだけの薄い層にした。入力は API 用の `AskRequest`、応答はコアの `Answer` (もともと Pydantic) をそのまま使う。コアのモデルを変えると API の契約も変わるが、`docs/openapi.json` の一致チェックで CI が気づく。
+19. API には認証がないので、`127.0.0.1` だけで待ち受ける。手元のデモ専用で、本番向けではない。
+20. API の provider は起動時に組み立てる。設定の不足 (キー、namespace、モデル名) は最初のリクエストではなく起動時に、変数名入りのエラーで止まる。生成は `GENERATOR` の切り替えだけで差し替えられる (API は `factory.build_generator()` を呼ぶだけ)。
+21. 外部サービスのエラーは 502 にし、決まった文と `request_id` だけを返す。SDK の例外の文にはインデックス名やリクエストの中身が入ることがあるので、ログにもクラス名だけを出す。`/health` は外部サービスを呼ばない (リランクの無料枠と費用を使わないため)。
+22. Pinecone の namespace は `PINECONE_NAMESPACE` で決める (必須)。default namespace は空文字だと「未設定」と区別できないので、Pinecone のコンソールの表記に合わせて `__default__` と書く。
+23. 本物で確認したこと (2026-10-19): Swagger UI から `/ask` を 1 回 (200、3.9 秒、出典に Cablivi の 6.1 List of excipients の 10 ページと 11 ページ)。ログに質問文は出ていない。上位 3 件はラベル表示の「3. LIST OF EXCIPIENTS」のほぼ同じ文で、重複の除去はまだしていない。

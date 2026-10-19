@@ -27,9 +27,9 @@ EMBED_BATCH_SIZE = 96
 TOKENS_PER_WORD = 1.7
 UPSERT_BATCH_SIZE = 100
 DELETE_BATCH_SIZE = 1000
+# The rerank model has no default in code either: it comes from PINECONE_RERANK_MODEL.
 # bge-reranker-v2-m3 (inference.get_model): 100 documents per request, 1024 tokens per
 # question + document pair. Starter plan: 500 rerank requests per month, 60 per minute.
-DEFAULT_RERANK_MODEL = "bge-reranker-v2-m3"
 
 
 def _require_env(name: str) -> str:
@@ -113,14 +113,14 @@ class PineconeInferenceEmbedder:
 class PineconeReranker:
     """Reranker backed by Pinecone's hosted rerank models. One API request per call."""
 
-    def __init__(self, inference: Any, model: str = DEFAULT_RERANK_MODEL) -> None:
+    def __init__(self, inference: Any, model: str) -> None:
         self.inference = inference
         self.name = model
         self.requests_made = 0  # for reporting usage against the free-plan request limit
 
     @classmethod
     def from_env(cls) -> "PineconeReranker":
-        model = os.environ.get("PINECONE_RERANK_MODEL") or DEFAULT_RERANK_MODEL
+        model = _require_env("PINECONE_RERANK_MODEL")  # checked before any client is created
         return cls(_client_from_env().inference, model=model)
 
     def rerank(self, query: str, documents: list[str], top_n: int) -> list[tuple[int, float]]:

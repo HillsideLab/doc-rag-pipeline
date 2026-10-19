@@ -20,7 +20,7 @@ This is a learning prototype built from **public documents only**. It is not pro
 ## 3. Scope tiers (build in this order, stop when time runs out)
 
 **Tier 1 (must):** local pipeline + API
-extract (Textract) -> chunk -> embed -> index (Pinecone) -> `/query` with citations; pytest; Dockerfile; GitHub Actions CI; README with diagram and a "Verified components" table.
+extract (Textract) -> chunk -> embed -> index (Pinecone) -> `/ask` with citations; pytest; Dockerfile; GitHub Actions CI; README with diagram and a "Verified components" table.
 
 **Tier 2 (core, build right after M2/M3; this mirrors the job's event-driven pipeline):** event-driven automation + IaC
 S3 upload -> EventBridge -> Step Functions -> Lambda; DynamoDB status table; retries (max 3) and failure state; Terraform for all of it; Secrets Manager for the Pinecone key.
@@ -44,7 +44,7 @@ PDF uploaded to S3 (prefix incoming/)
 FastAPI
   POST /documents            register an S3 key and start the pipeline (Tier 1: runs inline/local)
   GET  /documents/{doc_id}   processing status
-  POST /query                {question, top_k} -> {answer, citations[{chunk_id, file, product, section, page, chunk_type}], generator, disclaimer}
+  POST /ask                  {question, top_k} -> {answer, citations[{chunk_id, file, product, section, page, chunk_type}], generator, disclaimer}
   GET  /health               liveness + dependency checks (no secrets in output)
 ```
 
