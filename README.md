@@ -8,7 +8,7 @@ It is not production software. See `SPEC.md` for scope.
 - **Not medical advice.** This is a technical prototype. Its answers are not medical advice
   and must not be used for any clinical or treatment decision.
 
-Status: work in progress (milestone M4, answering with citations). See "Verified components"
+Status: work in progress (milestone M6, event-driven pipeline on AWS). See "Verified components"
 for what has been run against real services.
 
 ## Verified components
@@ -22,7 +22,10 @@ A component is marked "verified" only after a real call has succeeded.
 | Pinecone dense index: upsert, re-index without stale chunks, query with `doc_id` filter | verified 2026-10-19 (re-indexing kept 335 records; integration test removed stale chunks in a test namespace) |
 | Pinecone reranking (`bge-reranker-v2-m3`, top 50 vector hits) | verified 2026-10-19 (5 requests) |
 | Answering with `StubGenerator` (no generative model) over Pinecone retrieval + reranking | verified 2026-10-19 (5 evaluation questions) |
-| `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
+| Event-driven pipeline, cache-hit path: S3 `incoming/` -> EventBridge -> Step Functions -> Lambda (Register -> Index) -> DynamoDB `INDEXED`, Pinecone namespace `pipeline` | verified 2026-10-19 (Cablivi, 39 pages, 138 chunks, same count as the M3 index; Textract skipped by the cache) |
+| Failure path for a non-retryable error: Catch -> `MarkFailed` (DynamoDB `FAILED` + error), no retry | verified 2026-10-19 (first run failed on a missing Lambda setting, `PINECONE_EMBED_MODEL`) |
+| Pipeline cache-miss path (StartExtraction -> Wait/Check -> SaveExtraction) | **not verified yet** |
+| Retries of transient errors (3 attempts in total, then `FAILED`) | **not verified yet** |
 | Bedrock | blocked by an AWS account restriction |
 
 ## Retrieval quality
@@ -79,6 +82,18 @@ Result on the 5 evaluation questions (StubGenerator, Pinecone + reranking, `top_
 answers cite at least one expected chunk; the mean share of expected chunks cited is 0.85.
 This matches retrieval hit@5 with reranking, because the stub cites every retrieved chunk.
 One run used 66 embedding tokens and 5 rerank requests.
+
+## Event-driven pipeline (M6, in progress)
+
+Uploading a PDF to `s3://$S3_BUCKET/incoming/` starts a Step Functions workflow. Its states,
+retries and failure handling are in `infra/statemachine.asl.json`, and the infrastructure is
+in `infra/` (Terraform, local state). Status is kept in the DynamoDB table
+`doc-rag-mock-documents`. Chunks go to the Pinecone namespace `pipeline`, so the M3 data in the
+default namespace is left untouched. Full run steps, cost notes and cleanup come with M7.
+
+Measured on the first successful run (Cablivi, cache hit, cold start): the whole execution
+took 8 s. Lambda RegisterDocument ran for 1.9 s with 116 of 256 MB used. Lambda
+IndexDocument (138 chunks) ran for 3.9 s with 158 of 1024 MB used, and its timeout is 300 s.
 
 ## Documents
 
