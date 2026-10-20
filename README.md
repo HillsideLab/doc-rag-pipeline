@@ -1,13 +1,49 @@
-# doc-rag-pipeline
+# Event-Driven Document Processing and RAG Pipeline on AWS
 
-A small learning prototype of an event-driven document-processing and RAG pipeline on AWS,
-built with AI assistance (Claude Code). It is not production software. See `SPEC.md` for scope.
-A component is marked "verified" below only after a real call to the real service has succeeded.
+A technical prototype: an event-driven document-processing and RAG ingestion pipeline on AWS,
+plus a local RAG API that answers questions with citations.
 
-- **Public documents only.** The only inputs are product information documents published by
-  the European Medicines Agency (EMA). No company-internal or proprietary data is used.
+## What it does
+
+**Ingestion (AWS)**
+
+- PDFs uploaded to `incoming/` in S3 start the pipeline through EventBridge and Step Functions.
+- Python services on Lambda run extraction (Textract), chunking, metadata enrichment (section
+  and product names), and embedding and vector indexing in Pinecone.
+- Transient errors are retried, up to 3 attempts in total. Errors that a retry cannot fix, such
+  as a missing setting or a file Textract cannot read, fail at once.
+- Textract results are cached in S3 by the PDF's sha256. Each document's status (RECEIVED,
+  INDEXED, FAILED) is kept in DynamoDB.
+- The infrastructure is built with Terraform (`infra/`).
+
+**Question answering (local API)**
+
+- Built with FastAPI and Pydantic. Answers use reranked passages and numbered citations.
+- With the Anthropic API generator, the answer says it does not know when the passages do not
+  cover the question.
+- On a 5-question evaluation set, retrieval with reranking reached hit@5 = 5/5.
+- The OpenAPI document is produced from the code and committed as `docs/openapi.json`. CI fails
+  if it no longer matches the code.
+- The API has a health check.
+
+## Scope
+
+- **Technical prototype.** This is not a production-ready medical application. See `SPEC.md`
+  for scope. "Verified components" and "Known limitations" below show what has run against the
+  real services, what is tested only with fakes, and what is missing. A component is marked
+  "verified" only after a real call to the real service has succeeded.
+- **Public documents only.** The only inputs are three documents published by the European
+  Medicines Agency (EMA), downloaded in October 2026 and used in accordance with the
+  [EMA legal notice](https://www.ema.europa.eu/en/about-us/legal-notice). No company-internal
+  or proprietary data is used.
+  - [Cablivi (EPAR page)](https://www.ema.europa.eu/en/medicines/human/EPAR/cablivi): Product
+    Information, Medicine overview
+  - [Aubagio (EPAR page)](https://www.ema.europa.eu/en/medicines/human/EPAR/aubagio): Product
+    Information
 - **Not medical advice.** This is a technical prototype. Its answers are not medical advice
   and must not be used for any clinical or treatment decision.
+
+## Status and demo
 
 Status: milestones M0 to M6 are done, including M5 (local HTTP API and Docker image). M7 is
 this documentation pass. Bedrock is still blocked by an AWS account restriction, so answers are
@@ -69,7 +105,8 @@ Ingestion (M6, on AWS)
 Questions (M4/M5, local)
   POST /ask (FastAPI on 127.0.0.1) -> answer_question()
       -> embed the question -> Pinecone search (top 50) -> rerank -> top_k passages
-      -> generator (Anthropic API, or the stub) -> answer + citations + disclaimer
+      -> generator (GENERATOR: anthropic, bedrock or stub; see "Answering questions")
+      -> answer + citations + disclaimer
 ```
 
 The same plain Python modules under `src/` are used by the CLI scripts, the API, and the
@@ -89,11 +126,16 @@ cp .env.example .env   # optional; defaults use offline fakes
 ## Documents
 
 Public documents only. PDFs are not committed; download them into `data/pdfs/` (git-ignored).
+Each file name links to the PDF on the EMA website.
 
-| File | Pages | Source (EMA EPAR page, "Product information") |
-|---|---|---|
-| `cablivi-epar-product-information_en.pdf` | 39 | https://www.ema.europa.eu/en/medicines/human/EPAR/cablivi |
-| `aubagio-epar-product-information_en.pdf` | 50 | https://www.ema.europa.eu/en/medicines/human/EPAR/aubagio |
+| File | Pages |
+|---|---|
+| [`cablivi-epar-product-information_en.pdf`](https://www.ema.europa.eu/en/documents/product-information/cablivi-epar-product-information_en.pdf) | 39 |
+| [`aubagio-epar-product-information_en.pdf`](https://www.ema.europa.eu/en/documents/product-information/aubagio-epar-product-information_en.pdf) | 50 |
+| [`cablivi-epar-medicine-overview_en.pdf`](https://www.ema.europa.eu/en/documents/overview/cablivi-epar-medicine-overview_en.pdf) | 3 |
+
+The medicine overview was used only to check ingestion into the Pinecone namespace `pipeline`.
+It is not in the default namespace that the API reads.
 
 ## Extract one PDF with Textract
 
