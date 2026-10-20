@@ -90,6 +90,8 @@ A component is marked "verified" only after a real call has succeeded.
 | Lambda logs as JSON (`log_format = "JSON"`): every line in the log group is JSON; `step`, `status`, `document_id` and `execution_arn` are top-level fields | verified 2026-10-19 (read with `aws logs filter-log-events`; CloudWatch Logs Insights queries were not tried) |
 | HTTP API on 127.0.0.1 (FastAPI): `POST /ask` from the Swagger UI, `StubGenerator` over Pinecone retrieval + reranking; `GET /health` | verified 2026-10-19 (1 `/ask` request: 200 in 3.9 s; the citations included Cablivi 6.1 List of excipients, pages 10 and 11; the log line had no question text) |
 | `AnthropicApiGenerator` (Anthropic API, official SDK, `claude-haiku-5-5`) over Pinecone retrieval + reranking, via `POST /ask` from the Swagger UI | verified 2026-10-19 (1 `/ask` request: 200 in 5.7 s, of which generation 1.7 s; 712 input and 115 output tokens, `stop_reason` `end_turn`, 5 passages cited; the `[n]` marks matched the citations; the log had no question text, passage text, answer text or key) |
+| Pipeline, all three documents through `incoming/` (cache hit, Textract skipped) | verified 2026-10-20 (Aubagio PI: 50 pages, 197 chunks, 4.6 s; Cablivi medicine overview: 3 pages, 12 chunks, 6.6 s; Cablivi PI was run on 2026-10-19) |
+| Questions over the data ingested by the pipeline: S3 `incoming/` -> Step Functions -> Pinecone namespace `pipeline` -> `POST /ask` (`PINECONE_NAMESPACE=pipeline`) -> `AnthropicApiGenerator` | verified 2026-10-20 (2 `/ask` requests from the Swagger UI: "What are the excipients of Cablivi?" 200 in 5.0 s, of which generation 1.5 s, 712 input and 80 output tokens, 4 passages cited, same answer and sources as on 2026-10-19; "What is Cablivi used for?" 200 in 4.6 s, 3 passages cited, the first and third from `cablivi-epar-medicine-overview_en.pdf`, which is only in the `pipeline` namespace) |
 | Docker image of the API (`python:3.12-slim`, locked runtime dependencies, non-root) | verified 2026-10-19 (rebuilt locally after the `anthropic` SDK was added to `uv.lock`, 415 MB, `anthropic` 1.15.0 in the image; container started with `--env-file .env` and `/health` returned `pinecone` for the embedder, vector store and reranker and `anthropic` for the generator; `/ask` was not sent through the container; not pushed) |
 | `BedrockClaudeGenerator` (Converse API, inference profile ID) | **not verified**: written and unit-tested with a fake client only; never called for real |
 | Bedrock | blocked by an AWS account restriction |
@@ -134,8 +136,10 @@ Each file name links to the PDF on the EMA website.
 | [`aubagio-epar-product-information_en.pdf`](https://www.ema.europa.eu/en/documents/product-information/aubagio-epar-product-information_en.pdf) | 50 |
 | [`cablivi-epar-medicine-overview_en.pdf`](https://www.ema.europa.eu/en/documents/overview/cablivi-epar-medicine-overview_en.pdf) | 3 |
 
-The medicine overview was used only to check ingestion into the Pinecone namespace `pipeline`.
-It is not in the default namespace that the API reads.
+All three files have been ingested by the pipeline into the Pinecone namespace `pipeline`.
+By default the API reads the default namespace, which holds only the two product-information
+PDFs (indexed with `scripts/index_documents.py`). With `PINECONE_NAMESPACE=pipeline`, the API
+answers from the three documents ingested by the pipeline; this was checked on 2026-10-20.
 
 ## Extract one PDF with Textract
 
@@ -358,6 +362,14 @@ Dotted lines are failures. Which failures are retried:
   line at once.
 - MarkIndexed and MarkFailed update DynamoDB directly from Step Functions (no Lambda) and are
   not retried. A failure in MarkFailed itself ends the execution without a DynamoDB update.
+
+The bucket uses three prefixes:
+
+| Prefix | Contents |
+|---|---|
+| `incoming/` | PDFs put here start the pipeline |
+| `raw/` | PDFs uploaded by `scripts/extract_pdf.py` (local development); nothing starts |
+| `textract-cache/` | Textract results, named by the PDF's sha256 |
 
 States, retries and failure handling are in `infra/statemachine.asl.json`. The pipeline's AWS
 resources are in `infra/` (Terraform, local state); the S3 bucket already existed and only its
