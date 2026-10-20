@@ -3,6 +3,10 @@
 A technical prototype: an event-driven document-processing and RAG ingestion pipeline on AWS,
 plus a local RAG API that answers questions with citations.
 
+## Overview
+
+![Overview: ingestion on AWS (S3, EventBridge, Step Functions, Lambda with Textract, chunking and embedding, Pinecone) and question answering through a local FastAPI app (Pinecone search and rerank, Claude)](docs/images/overview.png)
+
 ## What it does
 
 **Ingestion (AWS)**

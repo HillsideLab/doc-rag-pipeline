@@ -87,6 +87,7 @@
 - `docs/images/ask-demo.png`: README に貼るデモの画面 (Swagger UI から `/ask` を送り、出典番号つきの回答と出典の一覧が返ったところ)。キーやアカウント ID が写っていないことを確認済み。
 - `docs/images/ask-aubagio.png`: README の追加の例。Aubagio の質問に、SmPC (4.1) と患者向け説明書の両方を出典として答えた画面 (4 件目の SmPC の出典は画面の外)。キーやアカウント ID が写っていないことを確認済み。
 - `docs/images/ask-dont-know.png`: README の追加の例。製品情報にない値段の質問に「分からない」と答え、citations には検索結果が並んだ画面。キーやアカウント ID が写っていないことを確認済み。
+- `docs/images/overview.png`: README 冒頭の Overview の図 (取り込みと質問の 2 本の流れ、技術スタック、数字、状態)。リポジトリ外の HTML から作った画像で、タイトルは README の見出しと重ならないよう外した。キーやアカウント ID、バケット名、テーブル名が写っていないことを確認済み。
 - `Dockerfile`: API のイメージ (手元で動かすだけで、レジストリには push しない)。`python:3.12-slim` に版を固定した uv を入れ、`uv.lock` どおりに本番用の依存だけを入れる。root ではないユーザーで動かす。
 - `.dockerignore`: ビルドに送るファイルを許可リストで決める (`pyproject.toml`、`uv.lock`、`.python-version`、`src/` だけ)。`.env` はイメージに入らない。
 - `tests/test_api.py`: API のテスト (TestClient とフェイクのみ)。正常系、入力の検証 (422)、外部エラー (502 で内部情報を出さない)、ログに質問文が出ないこと、起動ログ、`/health`、`docs/openapi.json` との一致。
